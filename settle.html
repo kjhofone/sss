@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>투자 스터디 · 결산 관리</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="layout">
+
+  <nav class="sidebar">
+    <div class="logo">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <polyline points="1,12 5,7 9,9 15,3" stroke="#185fa5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="11,3 15,3 15,7" stroke="#185fa5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      투자 스터디
+    </div>
+    <a href="index.html"   class="nav-item"><div class="nav-dot g"></div>대시보드</a>
+    <a href="picks.html"   class="nav-item"><div class="nav-dot"></div>탑픽 관리</a>
+    <a href="trade.html"   class="nav-item"><div class="nav-dot r"></div>매수 / 매도</a>
+    <a href="members.html" class="nav-item"><div class="nav-dot"></div>참여자 현황</a>
+    <a href="settle.html"   class="nav-item"><div class="nav-dot a"></div>결산 관리</a>
+    <a href="admin.html"   class="nav-item"><div class="nav-dot"></div>사용자 관리</a>
+    <div style="flex:1;"></div>
+    <div style="padding:1rem 1.25rem;">
+      <button class="btn" style="width:100%;font-size:12px;" onclick="doLogout()">로그아웃</button>
+    </div>
+  </nav>
+
+  <main class="main">
+
+    <div class="topbar">
+      <div>
+        <div class="page-title">결산 관리</div>
+        <div class="updated">종목 교체 시 결산 입력 · 수익/손실 자동 계산</div>
+      </div>
+      <button class="btn btn-primary" onclick="toggleForm()">+ 결산 입력</button>
+    </div>
+
+    <!-- 결산 입력 폼 -->
+    <div id="settleForm" class="card" style="display:none;margin-bottom:1.25rem;">
+      <div class="card-head">
+        <div class="card-title">결산 입력</div>
+        <button class="btn" onclick="toggleForm()" style="font-size:12px;">닫기</button>
+      </div>
+      <div class="form-section">
+        <div class="form-row">
+          <div class="form-group">
+            <label>참여자</label>
+            <select id="s-member" onchange="loadMemberPicks()"><option value="">선택</option></select>
+          </div>
+          <div class="form-group">
+            <label>결산 종목 (매도 완료 종목)</label>
+            <select id="s-pick" onchange="fillSettleData()"><option value="">참여자 먼저 선택</option></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>매수 체결가 (원)</label>
+            <input type="number" id="s-buy" placeholder="자동 입력됨" oninput="calcSettle()" />
+          </div>
+          <div class="form-group">
+            <label>매도 체결가 (원)</label>
+            <input type="number" id="s-sell" placeholder="자동 입력됨" oninput="calcSettle()" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>수량 (주)</label>
+            <input type="number" id="s-qty" placeholder="자동 입력됨" oninput="calcSettle()" />
+          </div>
+          <div class="form-group">
+            <label>거래세 + 수수료 (원)</label>
+            <input type="number" id="s-fee" placeholder="예: 2400" oninput="calcSettle()" />
+          </div>
+        </div>
+
+        <!-- 계산 미리보기 -->
+        <div style="background:var(--bg);border-radius:var(--r-md);padding:14px 16px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;" id="calcPreview">
+          <div><div style="font-size:11px;color:var(--muted);">세전 손익</div><div style="font-size:15px;font-weight:500;" id="prev-gross">—</div></div>
+          <div><div style="font-size:11px;color:var(--muted);">거래세/수수료</div><div style="font-size:15px;font-weight:500;color:var(--muted);" id="prev-fee">—</div></div>
+          <div><div style="font-size:11px;color:var(--muted);">순손익</div><div style="font-size:15px;font-weight:500;" id="prev-net">—</div></div>
+          <div><div style="font-size:11px;color:var(--muted);">확정 수익률</div><div style="font-size:15px;font-weight:500;" id="prev-rate">—</div></div>
+        </div>
+        <div style="background:var(--bg);border-radius:var(--r-md);padding:10px 14px;font-size:13px;" id="nextBasePreview">
+          결산 후 기준금액: <strong id="prev-next-base">—</strong>
+          <span id="refillNotice" style="color:var(--up);margin-left:8px;font-size:12px;"></span>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;gap:8px;">
+          <button class="btn" onclick="toggleForm()">취소</button>
+          <button class="btn btn-primary" onclick="doSettle()">결산 확정</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 결산 내역 테이블 -->
+    <div class="card">
+      <div class="card-head"><div class="card-title">결산 내역</div></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>결산일</th><th>참여자</th><th>종목</th>
+            <th>매수가</th><th>매도가</th><th>수수료</th>
+            <th>순손익</th><th>수익률</th><th>결산 후 기준금액</th>
+          </tr></thead>
+          <tbody id="settleTbody">
+            <tr><td colspan="9" class="muted" style="text-align:center;padding:1.5rem;">불러오는 중...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/db.js"></script>
+<script>
+let members = [];
+let allPicks = [];
+let allSettles = [];
+const BASE = 1000000;
+
+async function init() {
+  await requireAuth();
+  members    = await fetchMembers();
+  allPicks   = await fetchAllPicks();
+  allSettles = await fetchSettlements();
+
+  const sel = document.getElementById('s-member');
+  members.forEach(m => sel.innerHTML += `<option value="${m.id}">${m.name}</option>`);
+
+  renderSettles(allSettles);
+}
+
+function toggleForm() {
+  const f = document.getElementById('settleForm');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+
+function loadMemberPicks() {
+  const memberId = document.getElementById('s-member').value;
+  const pickSel  = document.getElementById('s-pick');
+  pickSel.innerHTML = '<option value="">선택</option>';
+  allPicks
+    .filter(p => p.member_id === memberId && p.status === 'sold' && !allSettles.find(s => s.pick_id === p.pick_id))
+    .forEach(p => {
+      pickSel.innerHTML += `<option value="${p.pick_id}" data-buy="${p.buy_price}" data-sell="${p.sell_price}" data-qty="${p.buy_quantity}">${p.stock_name} (${(p.month||'').replace('-','년 ')}월)</option>`;
+    });
+}
+
+function fillSettleData() {
+  const opt = document.getElementById('s-pick').selectedOptions[0];
+  if (!opt?.value) return;
+  document.getElementById('s-buy').value  = opt.dataset.buy  || '';
+  document.getElementById('s-sell').value = opt.dataset.sell || '';
+  document.getElementById('s-qty').value  = opt.dataset.qty  || '';
+  calcSettle();
+}
+
+function calcSettle() {
+  const bp  = parseInt(document.getElementById('s-buy').value)  || 0;
+  const sp  = parseInt(document.getElementById('s-sell').value) || 0;
+  const qty = parseInt(document.getElementById('s-qty').value)  || 0;
+  const fee = parseInt(document.getElementById('s-fee').value)  || 0;
+
+  if (!bp || !sp || !qty) return;
+
+  const gross    = (sp - bp) * qty;
+  const net      = gross - fee;
+  const rate     = (net / BASE * 100).toFixed(2);
+  const nextBase = net < 0 ? BASE : BASE + net;
+
+  document.getElementById('prev-gross').textContent = (gross>=0?'+':'')+won(gross);
+  document.getElementById('prev-gross').className   = rCls(gross);
+  document.getElementById('prev-fee').textContent   = '-' + won(fee);
+  document.getElementById('prev-net').textContent   = (net>=0?'+':'')+won(net);
+  document.getElementById('prev-net').className     = rCls(net);
+  document.getElementById('prev-rate').textContent  = pct(rate);
+  document.getElementById('prev-rate').className    = rCls(rate);
+  document.getElementById('prev-next-base').textContent = won(nextBase);
+
+  const refill = document.getElementById('refillNotice');
+  refill.textContent = net < 0
+    ? `⚠ 손실 ${won(Math.abs(net))} → 추가 납입 필요, 기준금액 100만원으로 복구`
+    : '';
+}
+
+async function doSettle() {
+  const memberId = document.getElementById('s-member').value;
+  const pickId   = document.getElementById('s-pick').value;
+  const buyPrice = parseInt(document.getElementById('s-buy').value);
+  const sellPrice= parseInt(document.getElementById('s-sell').value);
+  const quantity = parseInt(document.getElementById('s-qty').value);
+  const taxFee   = parseInt(document.getElementById('s-fee').value) || 0;
+
+  if (!memberId || !pickId || !buyPrice || !sellPrice || !quantity) {
+    toast('모든 필드를 입력하세요.');
+    return;
+  }
+
+  const grossProfit = (sellPrice - buyPrice) * quantity;
+
+  try {
+    await submitSettlement({ member_id: memberId, pick_id: pickId,
+      buy_price: buyPrice, sell_price: sellPrice, quantity,
+      gross_profit: grossProfit, tax_fee: taxFee });
+    toast('결산 완료!');
+    toggleForm();
+    allSettles = await fetchSettlements();
+    renderSettles(allSettles);
+  } catch(e) { toast('오류: ' + e.message); }
+}
+
+function renderSettles(settles) {
+  const tbody = document.getElementById('settleTbody');
+  if (!settles.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;padding:1.5rem;">결산 내역이 없습니다</td></tr>';
+    return;
+  }
+  tbody.innerHTML = settles.map(s => {
+    const d = new Date(s.settled_at);
+    const ds = `${d.getFullYear()}.${d.getMonth()+1}.${d.getDate()}`;
+    return `<tr>
+      <td class="muted">${ds}</td>
+      <td>${s.members?.name || '-'}</td>
+      <td style="font-weight:500;">${s.picks?.stock_name || '-'}</td>
+      <td>${won(s.buy_price)}</td>
+      <td>${won(s.sell_price)}</td>
+      <td class="muted">-${won(s.tax_fee)}</td>
+      <td class="${rCls(s.net_profit)}">${s.net_profit>=0?'+':''}${won(s.net_profit)}</td>
+      <td class="${rCls(s.return_rate)}">${pct(s.return_rate)}</td>
+      <td style="font-weight:500;">${won(s.new_base_amount)}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function doLogout() {
+  await sb.auth.signOut();
+  location.href = 'index.html';
+}
+
+init();
+</script>
+</body>
+</html>
