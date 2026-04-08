@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head><meta charset="UTF-8"><title>Edge Function 확인</title>
+<style>
+body{font-family:-apple-system,sans-serif;padding:30px;background:#f5f5f4;color:#1a1a1a;}
+.card{background:#fff;border:0.5px solid rgba(0,0,0,0.1);border-radius:12px;padding:20px;margin-bottom:16px;}
+pre{background:#f0f0ef;padding:12px;border-radius:8px;font-size:12px;white-space:pre-wrap;word-break:break-all;margin:8px 0;}
+.ok{color:#0f6e56;font-weight:500;} .fail{color:#a32d2d;font-weight:500;} .warn{color:#854f0b;}
+button{background:#185fa5;color:white;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:500;}
+input{width:100%;padding:8px 10px;border:0.5px solid rgba(0,0,0,0.2);border-radius:8px;font-size:13px;box-sizing:border-box;margin-top:4px;}
+label{font-size:12px;color:#6b7280;font-weight:500;}
+</style>
+</head>
+<body>
+<div class="card">
+  <h3 style="margin:0 0 16px;">Supabase + Edge Function 확인</h3>
+  <div style="margin-bottom:12px;">
+    <label>Supabase URL</label>
+    <input id="url" value="https://xqqrxmxjvvzxcfxmqfks.supabase.co" />
+  </div>
+  <div style="margin-bottom:16px;">
+    <label>Anon Key (config.js 에 있는 값)</label>
+    <input id="key" placeholder="eyJ... 또는 sb_publishable_..." />
+  </div>
+  <button onclick="run()">테스트 시작</button>
+</div>
+
+<div class="card">
+  <h4 style="margin:0 0 12px;">결과</h4>
+  <pre id="out">위에서 테스트 시작을 누르세요.</pre>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+const el = document.getElementById('out');
+function log(msg) { el.textContent += msg + '\n'; }
+
+async function run() {
+  el.textContent = '';
+  const url = document.getElementById('url').value.trim();
+  const key = document.getElementById('key').value.trim();
+  if (!url || !key) { el.textContent = '❌ URL과 Key를 입력하세요'; return; }
+
+  const { createClient } = supabase;
+  const sb = createClient(url, key);
+
+  // 1. DB 연결
+  log('[ 1 ] DB 연결 테스트...');
+  try {
+    const { data, error } = await sb.from('members').select('name').limit(3);
+    if (error) log('❌ 실패: ' + error.message);
+    else log('✅ 성공 — 참여자: ' + data.map(m => m.name).join(', '));
+  } catch(e) { log('❌ 예외: ' + e.message); }
+
+  // 2. schedules 테이블
+  log('\n[ 2 ] schedules 테이블 확인...');
+  try {
+    const { data, error } = await sb.from('schedules').select('id').limit(1);
+    if (error) log('❌ 없음 → supabase_add_schedules.sql 실행 필요\n    오류: ' + error.message);
+    else log('✅ 있음');
+  } catch(e) { log('❌ 예외: ' + e.message); }
+
+  // 3. Edge Function
+  log('\n[ 3 ] Edge Function (stock-price) 테스트...');
+  try {
+    const { data, error } = await sb.functions.invoke('stock-price', {
+      body: { codes: ['005930', '196170'] }
+    });
+    if (error) {
+      log('❌ 오류: ' + JSON.stringify(error));
+      if (JSON.stringify(error).includes('not found') || JSON.stringify(error).includes('404')) {
+        log('\n→ 원인: stock-price 함수가 배포되지 않음');
+        log('→ 해결: Supabase > Edge Functions > New Function');
+        log('         이름: stock-price');
+        log('         edge_function_stock_price.ts 내용 붙여넣기 > Deploy');
+      }
+    } else {
+      log('✅ Edge Function 응답!');
+      log('   삼성전자(005930): ' + (data?.['005930']?.price ?? '없음') + '원');
+      log('   알테오젠(196170): ' + (data?.['196170']?.price ?? '없음') + '원');
+      log('\n전체 응답:\n' + JSON.stringify(data, null, 2));
+    }
+  } catch(e) {
+    log('❌ 예외: ' + e.message);
+  }
+
+  log('\n=== 완료 ===');
+}
+</script>
+</body>
+</html>
