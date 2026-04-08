@@ -1,69 +1,96 @@
-# 투자 스터디 펀드 관리 시스템
+# 투자 스터디 펀드 v2 — 세팅 가이드
 
-## 📁 파일 구조
+## 변경사항
+- 참여자 6명 × 10개월 샘플 데이터
+- 손실 시 100만원 복구 로직 제거 (순수 누적 방식)
+- 현재가 자동 조회 (Yahoo Finance → Edge Function)
+- 사용자 관리 페이지 추가 (admin.html)
+
+---
+
+## STEP 1. DB 초기화 및 샘플 데이터
+
+Supabase SQL Editor에 `supabase_schema_v2.sql` 전체 붙여넣고 Run  
+→ 테이블 재생성 + 6명 × 10개월 데이터 자동 입력
+
+---
+
+## STEP 2. 현재가 API (Edge Function) 배포
+
+**2-1. Supabase CLI 설치**
+```bash
+# macOS
+brew install supabase/tap/supabase
+
+# Windows (PowerShell)
+scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
+scoop install supabase
 ```
-fund-study/
-├── index.html          ← 대시보드 (메인)
-├── picks.html          ← 탑픽 제출 + 히스토리
-├── trade.html          ← 매수/매도 입력
-├── members.html        ← 참여자 현황 + 승률
-├── settle.html         ← 결산 입력 (수익률 자동계산)
-├── css/style.css       ← 공통 스타일
-├── js/config.js        ← Supabase 연결 + 유틸
-├── js/db.js            ← DB 쿼리 함수
-└── supabase_schema.sql ← DB 테이블 설계 (최초 1회 실행)
+
+**2-2. 로그인 및 프로젝트 연결**
+```bash
+supabase login
+supabase link --project-ref YOUR_PROJECT_ID
+```
+
+**2-3. Edge Function 배포**
+```bash
+supabase functions deploy stock-price
+```
+
+**2-4. 배포 확인**  
+Supabase 대시보드 → Edge Functions → `stock-price` 활성화 확인
+
+---
+
+## STEP 3. config.js 수정
+
+`js/config.js`에서:
+```js
+const SUPABASE_URL  = 'https://YOUR_PROJECT_ID.supabase.co';
+const SUPABASE_ANON = 'YOUR_ANON_PUBLIC_KEY';
 ```
 
 ---
 
-## 🚀 세팅 순서
+## STEP 4. GitHub Pages 배포
 
-### STEP 1. Supabase 프로젝트 생성
-1. https://supabase.com 접속 → 회원가입 → New Project
-2. 프로젝트 이름: `fund-study` (원하는 이름)
-3. 데이터베이스 비밀번호 설정 후 Create Project
-4. 생성 완료까지 약 1분 대기
-
-### STEP 2. DB 테이블 생성
-1. Supabase 대시보드 → 좌측 **SQL Editor**
-2. `supabase_schema.sql` 전체 내용 붙여넣기
-3. **Run** 클릭 → 테이블 4개 + 뷰 + 트리거 자동 생성
-
-### STEP 3. API 키 복사
-1. Supabase → Settings → API
-2. **Project URL** 복사
-3. **anon public** 키 복사
-4. `js/config.js` 열어서 아래 두 줄 수정:
-   ```js
-   const SUPABASE_URL  = 'https://xxxxx.supabase.co';   // ← 여기
-   const SUPABASE_ANON = 'eyJhbGciOiJ...';              // ← 여기
-   ```
-
-### STEP 4. 사용자 계정 생성
-1. Supabase → Authentication → Users → **Invite user**
-2. 참여자 이메일 입력 → 초대 메일 발송
-3. 각자 비밀번호 설정 후 로그인 가능
-
-### STEP 5. GitHub 업로드
-1. https://github.com → New repository → `fund-study` (Public)
-2. 파일 전체 업로드 (또는 git push)
-3. Settings → Pages → Branch: main → Save
-4. 약 2분 후 `https://[아이디].github.io/fund-study` 접속 가능
+파일 전체를 GitHub 저장소에 올리고  
+Settings → Pages → Branch: main → Save
 
 ---
 
-## 📊 기능 요약
+## 현재가 동작 방식
 
-| 페이지 | 기능 |
+```
+브라우저 → Supabase Edge Function (stock-price)
+                ↓
+         Yahoo Finance API
+         005930.KS (KOSPI)
+         035720.KQ (KOSDAQ)
+                ↓
+         { price: 81300, change: 1.2 }
+                ↓
+브라우저 ← 현재가 표시 (5분 캐시)
+```
+
+**Edge Function이 없어도:** 현재가 칸이 `-`로 표시되고 나머지 기능은 정상 동작합니다.
+
+---
+
+## 사용자 관리 (admin.html)
+
+| 기능 | 설명 |
 |---|---|
-| 대시보드 | 총 자산, 평균 수익률, 탑픽 제출 현황, 알림 |
-| 탑픽 관리 | 제출 폼, 월별 탭 조회, 전체 히스토리 필터 |
-| 매수/매도 | 체결 입력, 예상 수익률 자동 계산 |
-| 참여자 현황 | 카드별 승률, 누적 수익, 종목 히스토리 |
-| 결산 관리 | 순손익 자동계산, 추가납입 알림, 기준금액 자동 업데이트 |
+| 참여자 추가 | 이름, 이메일, 기준금액, 참여일 입력 |
+| 정보 수정 | 이름, 이메일, 메모 등 수정 가능 |
+| 탈퇴 처리 | `is_active = false` 처리 (데이터 보존) |
+| 수익률 요약 | 최고/평균/최저 수익률 카드 표시 |
 
-## 🔧 수식 자동 계산 항목 (Supabase 서버에서 처리)
-- `settlements.net_profit` = gross_profit - tax_fee
-- `settlements.return_rate` = net_profit / base_amount × 100
-- `settlements.new_base_amount` = 손실 시 100만원 복구, 수익 시 복리 누적
-- `members.base_amount` = 결산 후 자동 업데이트 (트리거)
+---
+
+## 결산 방식 변경 (v2)
+
+- **이전:** 손실 시 100만원으로 강제 복구  
+- **v2:** 손실/수익 그대로 기준금액에 누적  
+  예) 1,000,000 → -70,000 손실 → 기준금액 930,000원으로 다음 달 운용
