@@ -3,7 +3,7 @@
 // ============================================================
 // ⚠️  아래 두 값을 Supabase 대시보드 > Settings > API 에서 복사하세요
 const SUPABASE_URL    = 'https://xqqrxmxjvvzxcfxmqfks.supabase.co';
-const SUPABASE_ANON   = 'sb_secret_0PJDZNomatXbx7VenH96Cw_GBx0l1ov';
+const SUPABASE_ANON   = 'sb_publishable_M6XoN8lfV6_KEZ72yQ8OQQ_8tqo_nx2';
 
 // Supabase 클라이언트 초기화 (CDN 버전 사용)
 const { createClient } = supabase;
