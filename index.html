@@ -3,103 +3,256 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>투자 스터디 펀드</title>
-  <style>
-    body { font-family: 'Noto Sans KR', sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
-    h1 { color: #1a237e; text-align: center; }
-    .card { background: white; border-radius: 10px; padding: 20px; margin: 20px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-    table { width: 100%; border-collapse: collapse; }
-    th { background: #1a237e; color: white; padding: 10px; }
-    td { padding: 10px; border-bottom: 1px solid #eee; text-align: center; }
-    .plus { color: #e53935; font-weight: bold; }
-    .minus { color: #1565c0; font-weight: bold; }
-  </style>
+  <title>투자 스터디 펀드 · 대시보드</title>
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <h1>📈 투자 스터디 펀드 현황</h1>
 
-  <div class="card">
-    <h2>👥 참여자 현황</h2>
-    <table id="membersTable">
-      <tr><th>이름</th><th>기준금액</th><th>현재평가액</th><th>수익률</th></tr>
-    </table>
-  </div>
+<div class="layout">
 
-  <div class="card">
-    <h2>📌 이번 달 탑픽</h2>
-    <table id="picksTable">
-      <tr><th>추천자</th><th>종목</th><th>매수가</th><th>현재가</th><th>수익률</th></tr>
-    </table>
-  </div>
+  <!-- 사이드바 -->
+  <nav class="sidebar">
+    <div class="logo">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <polyline points="1,12 5,7 9,9 15,3" stroke="#185fa5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="11,3 15,3 15,7" stroke="#185fa5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      투자 스터디
+    </div>
+    <a href="index.html"   class="nav-item active"><div class="nav-dot g"></div>대시보드</a>
+    <a href="picks.html"   class="nav-item"><div class="nav-dot"></div>탑픽 관리</a>
+    <a href="trade.html"   class="nav-item"><div class="nav-dot r"></div>매수 / 매도</a>
+    <a href="members.html" class="nav-item"><div class="nav-dot"></div>참여자 현황</a>
+    <a href="settle.html"  class="nav-item"><div class="nav-dot a"></div>결산 관리</a>
+    <div style="flex:1;"></div>
+    <div style="padding:1rem 1.25rem;">
+      <button class="btn" style="width:100%;font-size:12px;" onclick="doLogout()">로그아웃</button>
+    </div>
+  </nav>
 
-  <div class="card">
-    <h2>📋 매매 내역</h2>
-    <table id="tradesTable">
-      <tr><th>날짜</th><th>종목</th><th>구분</th><th>가격</th><th>수량</th></tr>
-    </table>
-  </div>
+  <!-- 본문 -->
+  <main class="main">
 
-  <script>
-    // ⚠️ 여기에 구글 시트 ID를 넣으세요
-    const SHEET_ID = '1701722309';
+    <div class="topbar">
+      <div>
+        <div class="page-title">대시보드</div>
+        <div class="updated" id="updatedAt">불러오는 중...</div>
+      </div>
+      <div class="btn-row">
+        <a href="trade.html?type=sell" class="btn">매도 요청</a>
+        <a href="picks.html?action=new" class="btn btn-primary">+ 탑픽 제출</a>
+      </div>
+    </div>
 
-    async function loadSheet(sheetName) {
-      const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${sheetName}`;
-      const res = await fetch(url);
-      const text = await res.text();
-      const json = JSON.parse(text.substring(47).slice(0, -2));
-      return json.table.rows;
-    }
+    <!-- 요약 지표 -->
+    <div class="metric-grid">
+      <div class="metric">
+        <div class="metric-label">총 운용 자산</div>
+        <div class="metric-value" id="totalAsset">—</div>
+        <div class="metric-sub" id="totalProfit">—</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">평균 수익률</div>
+        <div class="metric-value" id="avgReturn">—</div>
+        <div class="metric-sub">수수료 반영 · 확정 기준</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">이번 달 탑픽 제출</div>
+        <div class="metric-value" id="pickStatus">—</div>
+        <div class="metric-sub" id="pickMissing">—</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">참여자 수</div>
+        <div class="metric-value" id="memberCount">—</div>
+        <div class="metric-sub">활성 참여자</div>
+      </div>
+    </div>
 
-    async function renderMembers() {
-      const rows = await loadSheet('members');
-      const tbody = document.getElementById('membersTable');
-      rows.forEach(row => {
-        const name = row.c[0]?.v || '';
-        const base = row.c[1]?.v || 0;
-        const current = row.c[2]?.v || 0;
-        const rate = ((current - base) / base * 100).toFixed(2);
-        const cls = rate >= 0 ? 'plus' : 'minus';
-        tbody.innerHTML += `<tr>
-          <td>${name}</td>
-          <td>${base.toLocaleString()}원</td>
-          <td>${current.toLocaleString()}원</td>
-          <td class="${cls}">${rate}%</td>
-        </tr>`;
-      });
-    }
+    <!-- 탑픽 + 참여자 수익률 -->
+    <div style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:12px;margin-bottom:1.25rem;">
 
-    async function renderPicks() {
-      const rows = await loadSheet('picks');
-      const tbody = document.getElementById('picksTable');
-      rows.forEach(row => {
-        tbody.innerHTML += `<tr>
-          <td>${row.c[0]?.v || ''}</td>
-          <td>${row.c[1]?.v || ''}</td>
-          <td>${(row.c[2]?.v || 0).toLocaleString()}원</td>
-          <td>${(row.c[3]?.v || 0).toLocaleString()}원</td>
-          <td>${row.c[4]?.v || ''}</td>
-        </tr>`;
-      });
-    }
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">이번 달 탑픽</div>
+          <a href="picks.html" style="font-size:12px;color:#185fa5;text-decoration:none;">전체 히스토리 →</a>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>추천자</th><th>종목</th><th>매수가</th><th>수익률</th><th>목표가</th><th>상태</th>
+            </tr></thead>
+            <tbody id="picksTbody">
+              <tr><td colspan="6" class="muted" style="text-align:center;padding:1.5rem;">불러오는 중...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-    async function renderTrades() {
-      const rows = await loadSheet('trades');
-      const tbody = document.getElementById('tradesTable');
-      rows.forEach(row => {
-        tbody.innerHTML += `<tr>
-          <td>${row.c[0]?.v || ''}</td>
-          <td>${row.c[1]?.v || ''}</td>
-          <td>${row.c[2]?.v || ''}</td>
-          <td>${(row.c[3]?.v || 0).toLocaleString()}원</td>
-          <td>${row.c[4]?.v || ''}</td>
-        </tr>`;
-      });
-    }
+      <div class="card">
+        <div class="card-head"><div class="card-title">참여자 수익률</div></div>
+        <div id="memberBars" style="display:flex;flex-direction:column;gap:8px;"></div>
+        <div style="margin-top:14px;border-top:0.5px solid var(--border);padding-top:12px;">
+          <div class="notice-list" id="notices"></div>
+        </div>
+      </div>
 
-    renderMembers();
-    renderPicks();
-    renderTrades();
-  </script>
+    </div>
+
+    <!-- 최근 매매 내역 -->
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">최근 매매 내역</div>
+        <a href="trade.html" style="font-size:12px;color:#185fa5;text-decoration:none;">전체 보기 →</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>일시</th><th>추천자</th><th>종목</th><th>구분</th><th>체결가</th><th>수량</th><th>금액</th>
+          </tr></thead>
+          <tbody id="tradesTbody">
+            <tr><td colspan="7" class="muted" style="text-align:center;padding:1.5rem;">불러오는 중...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<!-- Supabase CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/db.js"></script>
+<script>
+async function init() {
+  await requireAuth();
+
+  const now = new Date();
+  document.getElementById('updatedAt').textContent =
+    `마지막 업데이트 ${now.toLocaleDateString('ko-KR')} ${now.toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'})} · 체결가 기준`;
+
+  const [members, picks, trades] = await Promise.all([
+    fetchMemberStats(),
+    fetchPicksByMonth(currentMonth()),
+    fetchTrades(8)
+  ]);
+
+  renderMetrics(members, picks);
+  renderPicksTable(picks);
+  renderMemberBars(members);
+  renderNotices(members, picks);
+  renderTradesTable(trades);
+}
+
+function renderMetrics(members, picks) {
+  const totalBase = members.reduce((s,m) => s + m.base_amount, 0);
+  const totalProfit = members.reduce((s,m) => s + m.total_profit, 0);
+  const avgReturn = members.length
+    ? (members.reduce((s,m) => s + m.return_rate, 0) / members.length).toFixed(1)
+    : 0;
+
+  document.getElementById('totalAsset').textContent = won(totalBase);
+  document.getElementById('totalProfit').textContent =
+    `초기 대비 ${totalProfit >= 0 ? '+' : ''}${won(totalProfit)}`;
+  document.getElementById('avgReturn').textContent = pct(avgReturn);
+  document.getElementById('avgReturn').className = 'metric-value ' + rCls(avgReturn);
+  document.getElementById('memberCount').textContent = members.length + '명';
+
+  const submitted = picks.length;
+  const total = members.length;
+  document.getElementById('pickStatus').textContent = `${submitted} / ${total}`;
+  const missing = members.filter(m => !picks.find(p => p.member_id === m.id));
+  document.getElementById('pickMissing').innerHTML = missing.length
+    ? `<span class="badge b-warn">${missing.map(m=>m.name).join(', ')} 미제출</span>`
+    : '<span class="badge b-sold">전원 제출 완료</span>';
+}
+
+function renderPicksTable(picks) {
+  const tbody = document.getElementById('picksTbody');
+  if (!picks.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;padding:1.5rem;">이번 달 탑픽이 없습니다</td></tr>';
+    return;
+  }
+  tbody.innerHTML = picks.map(p => {
+    const r = p.realized_return;
+    const statusBadge = p.status === 'sold'
+      ? '<span class="badge b-sold">매도완료</span>'
+      : '<span class="badge b-hold">보유중</span>';
+    const upside = p.target_price && p.buy_price
+      ? ((p.target_price - p.buy_price) / p.buy_price * 100).toFixed(1)
+      : null;
+    return `<tr>
+      <td><div class="flex"><div class="avatar av1">${p.member_name.slice(0,2)}</div>${p.member_name}</div></td>
+      <td style="font-weight:500;">${p.stock_name}</td>
+      <td>${won(p.buy_price)}</td>
+      <td class="${rCls(r)}">${pct(r)}</td>
+      <td style="color:var(--green);">${p.target_price ? won(p.target_price) + (upside ? ` <span style="font-size:11px;">(+${upside}%)</span>` : '') : '-'}</td>
+      <td>${statusBadge}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderMemberBars(members) {
+  const el = document.getElementById('memberBars');
+  const sorted = [...members].sort((a,b) => b.return_rate - a.return_rate);
+  const maxAbs = Math.max(...sorted.map(m => Math.abs(m.return_rate)), 1);
+  el.innerHTML = sorted.map((m, i) => {
+    const w = Math.round(Math.abs(m.return_rate) / maxAbs * 100);
+    const barCls = m.return_rate >= 0 ? 'bar-up' : 'bar-dn';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;background:var(--bg);border-radius:var(--r-md);">
+      <div class="avatar ${avCls[i % 4]}" style="width:28px;height:28px;font-size:11px;">${m.name.slice(0,2)}</div>
+      <div style="font-size:13px;font-weight:500;width:52px;">${m.name}</div>
+      <div style="flex:1;height:6px;background:var(--border);border-radius:4px;overflow:hidden;">
+        <div class="prog-bar ${barCls}" style="width:${w}%;"></div>
+      </div>
+      <div class="${rCls(m.return_rate)}" style="font-size:12px;min-width:46px;text-align:right;">${pct(m.return_rate)}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderNotices(members, picks) {
+  const el = document.getElementById('notices');
+  const items = [];
+  const missing = members.filter(m => !picks.find(p => p.member_id === m.id));
+  if (missing.length) items.push(`<div class="notice"><div class="nd nd-warn"></div>${missing.map(m=>m.name).join(', ')}님 탑픽 미제출</div>`);
+  members.filter(m => m.return_rate < 0).forEach(m =>
+    items.push(`<div class="notice"><div class="nd nd-info"></div>${m.name}님 누적 ${pct(m.return_rate)} · 손실 중</div>`)
+  );
+  el.innerHTML = items.length ? items.join('') : '<div class="notice"><div class="nd nd-ok"></div>특이사항 없음</div>';
+}
+
+function renderTradesTable(trades) {
+  const tbody = document.getElementById('tradesTbody');
+  if (!trades.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:1.5rem;">매매 내역이 없습니다</td></tr>';
+    return;
+  }
+  tbody.innerHTML = trades.map(t => {
+    const d = new Date(t.traded_at);
+    const dateStr = `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+    const typeBadge = t.trade_type === 'buy'
+      ? '<span class="badge b-buy">매수</span>'
+      : '<span class="badge b-sell">매도</span>';
+    return `<tr>
+      <td class="muted">${dateStr}</td>
+      <td>${t.members?.name || '-'}</td>
+      <td style="font-weight:500;">${t.stock_name}</td>
+      <td>${typeBadge}</td>
+      <td>${won(t.price)}</td>
+      <td>${t.quantity}주</td>
+      <td>${won(t.price * t.quantity)}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function doLogout() {
+  await sb.auth.signOut();
+  location.reload();
+}
+
+init();
+</script>
 </body>
 </html>
