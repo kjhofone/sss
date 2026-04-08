@@ -1,24 +1,21 @@
 // ============================================================
-// js/db.js  v4 최종본
-// 현재가: Supabase Edge Function 우선 → 실패 시 수동입력 안내
-// 일정: submitSchedule / updateSchedule / deleteSchedule 포함
+// js/db.js v5
+// 현재가: Supabase DB의 stock_prices 테이블에서 읽기
+// Edge Function 불필요 — 네이버 금융에서 확인 후 홈페이지에서 직접 입력
 // ============================================================
 
-// ── 참여자
 async function fetchMembers() {
   const { data, error } = await sb.from('members').select('*').eq('is_active', true).order('joined_at');
   if (error) { console.error(error); return []; }
   return data;
 }
 
-// ── 탑픽 (월별)
 async function fetchPicksByMonth(month) {
   const { data, error } = await sb.from('picks_with_trades').select('*').eq('month', month).order('submitted_at');
   if (error) { console.error(error); return []; }
   return data;
 }
 
-// ── 탑픽 (전체)
 async function fetchAllPicks(filters = {}) {
   let q = sb.from('picks_with_trades').select('*');
   if (filters.member_id) q = q.eq('member_id', filters.member_id);
@@ -28,7 +25,6 @@ async function fetchAllPicks(filters = {}) {
   return data;
 }
 
-// ── 매매 내역
 async function fetchTrades(limit = 30) {
   const { data, error } = await sb.from('trades')
     .select('*, members(name), picks(stock_name, month)')
@@ -37,7 +33,6 @@ async function fetchTrades(limit = 30) {
   return data;
 }
 
-// ── 결산
 async function fetchSettlements() {
   const { data, error } = await sb.from('settlements')
     .select('*, members(name), picks(stock_name, month)')
@@ -46,22 +41,24 @@ async function fetchSettlements() {
   return data;
 }
 
-// ── CRUD
 async function submitPick(payload) {
   const { data, error } = await sb.from('picks').insert(payload).select().single();
   if (error) throw error;
   return data;
 }
+
 async function submitTrade(payload) {
   const { data, error } = await sb.from('trades').insert(payload).select().single();
   if (error) throw error;
   return data;
 }
+
 async function submitSettlement(payload) {
   const { data, error } = await sb.from('settlements').insert(payload).select().single();
   if (error) throw error;
   return data;
 }
+
 async function upsertMember(payload) {
   if (payload.id) {
     const { id, ...rest } = payload;
@@ -73,12 +70,12 @@ async function upsertMember(payload) {
   if (error) throw error;
   return data;
 }
+
 async function deactivateMember(id) {
   const { error } = await sb.from('members').update({ is_active: false }).eq('id', id);
   if (error) throw error;
 }
 
-// ── 유틸
 function currentMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
@@ -95,50 +92,47 @@ async function fetchMemberStats() {
 }
 
 // ============================================================
-// 현재가 조회
-// 1순위: Supabase Edge Function (stock-price)
-//        → 배포되어 있으면 서버에서 실행되므로 CORS 문제 없음
-// 2순위: 실패 시 null 반환 → UI에서 직접 입력 안내
-// 5분 캐시
+// 현재가 조회 — DB stock_prices 테이블에서 읽기
 // ============================================================
-const priceCache = {};
-
 async function fetchCurrentPrices(codes) {
   if (!codes || codes.length === 0) return {};
-
-  const now     = Date.now();
-  const fresh   = {};
-  const toFetch = [];
-
-  for (const c of codes) {
-    if (priceCache[c] && (now - priceCache[c].ts) < 5 * 60 * 1000) {
-      fresh[c] = priceCache[c].data;
-    } else {
-      toFetch.push(c);
+  const { data, error } = await sb
+    .from('stock_prices')
+    .select('stock_code, price, change_rate, market_cap, updated_at')
+    .in('stock_code', codes);
+  if (error) { console.error('fetchCurrentPrices 오류:', error); return {}; }
+  const result = {};
+  for (const row of (data || [])) {
+    if (row.price && row.price > 0) {
+      result[row.stock_code] = {
+        price:     row.price,
+        change:    row.change_rate || 0,
+        marketCap: row.market_cap || null,
+        updatedAt: row.updated_at,
+      };
     }
   }
-  if (toFetch.length === 0) return fresh;
+  return result;
+}
 
-  try {
-    // Edge Function 호출 (Supabase 대시보드에서 배포한 stock-price 함수)
-    const { data, error } = await sb.functions.invoke('stock-price', {
-      body: { codes: toFetch }
-    });
-    if (error) throw new Error(error.message);
-    if (!data)  throw new Error('응답 없음');
+// 현재가 저장 (주식 현황 페이지에서 호출)
+async function upsertStockPrice(payload) {
+  const { data, error } = await sb
+    .from('stock_prices')
+    .upsert({ ...payload, updated_at: new Date().toISOString() }, { onConflict: 'stock_code' })
+    .select().single();
+  if (error) throw error;
+  return data;
+}
 
-    for (const [code, info] of Object.entries(data)) {
-      if (info && info.price > 0) {
-        priceCache[code] = { ts: now, data: info };
-        fresh[code] = info;
-      }
-    }
-  } catch (e) {
-    console.warn('Edge Function 현재가 조회 실패:', e.message);
-    // 실패 시 빈 객체 반환 → picks.html에서 "직접 입력" 모드로 전환
-  }
-
-  return fresh;
+// stock_prices 전체 목록
+async function fetchStockPrices() {
+  const { data, error } = await sb
+    .from('stock_prices')
+    .select('*')
+    .order('stock_name');
+  if (error) { console.error(error); return []; }
+  return data || [];
 }
 
 // ============================================================
@@ -146,9 +140,7 @@ async function fetchCurrentPrices(codes) {
 // ============================================================
 async function fetchSchedules() {
   const { data, error } = await sb
-    .from('schedules')
-    .select('*')
-    .order('event_date', { ascending: true });
+    .from('schedules').select('*').order('event_date', { ascending: true });
   if (error) { console.error('fetchSchedules 오류:', error.message); return []; }
   return data ?? [];
 }

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>투자 스터디 · 현재가 관리</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="logo">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <polyline points="1,12 5,7 9,9 15,3" stroke="#185fa5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="11,3 15,3 15,7" stroke="#185fa5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      투자 스터디
+    </div>
+    <a href="index.html"    class="nav-item"><div class="nav-dot g"></div>대시보드</a>
+    <a href="picks.html"    class="nav-item"><div class="nav-dot"></div>탑픽 관리</a>
+    <a href="trade.html"    class="nav-item"><div class="nav-dot r"></div>매수 / 매도</a>
+    <a href="members.html"  class="nav-item"><div class="nav-dot"></div>참여자 현황</a>
+    <a href="settle.html"   class="nav-item"><div class="nav-dot a"></div>결산 관리</a>
+    <a href="prices.html"   class="nav-item active"><div class="nav-dot g"></div>현재가 관리</a>
+    <a href="schedule.html" class="nav-item"><div class="nav-dot g"></div>스터디 일정</a>
+    <a href="admin.html"    class="nav-item"><div class="nav-dot"></div>사용자 관리</a>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-footer">
+      <button class="btn" style="width:100%;font-size:12px;" onclick="doLogout()">로그아웃</button>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div id="db-banner" class="db-banner pending">DB 연결 확인 중...</div>
+
+    <div class="topbar">
+      <div>
+        <div class="page-title">현재가 관리</div>
+        <div class="updated">네이버 금융에서 확인 후 직접 입력 · 수동 업데이트</div>
+      </div>
+      <button class="btn btn-primary" onclick="openAddForm()">+ 종목 추가</button>
+    </div>
+
+    <!-- 안내 박스 -->
+    <div style="background:#e8f4fd;border:0.5px solid #b5d4f4;border-radius:var(--r-lg);padding:14px 16px;margin-bottom:1.25rem;font-size:13px;color:#0c447c;line-height:1.7;">
+      <strong>현재가 입력 방법</strong><br>
+      각 종목의 <strong>네이버 금융 열기</strong> 버튼을 클릭하면 해당 종목 페이지가 새 탭에서 열립니다.<br>
+      현재가, 등락률, 시가총액을 확인한 후 아래 입력란에 직접 입력하고 <strong>저장</strong>을 누르세요.<br>
+      <span style="color:#185fa5;">운영자가 주 1~2회 업데이트 권장. 마지막 업데이트 시각이 표시됩니다.</span>
+    </div>
+
+    <!-- 종목 추가 폼 -->
+    <div id="addForm" class="card" style="display:none;margin-bottom:1.25rem;">
+      <div class="card-head">
+        <div class="card-title">종목 추가</div>
+        <button class="btn" onclick="closeAddForm()" style="font-size:12px;">닫기</button>
+      </div>
+      <div class="form-section">
+        <div class="form-row">
+          <div class="form-group">
+            <label>종목명 *</label>
+            <input type="text" id="add-name" placeholder="예: 삼성전자" />
+          </div>
+          <div class="form-group">
+            <label>종목코드 *</label>
+            <input type="text" id="add-code" placeholder="예: 005930" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>시장</label>
+            <select id="add-market">
+              <option value="KOSPI">KOSPI</option>
+              <option value="KOSDAQ">KOSDAQ</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>현재가 (원)</label>
+            <input type="number" id="add-price" placeholder="예: 72400" />
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;">
+          <button class="btn" onclick="closeAddForm()">취소</button>
+          <button class="btn btn-primary" onclick="addStock()">추가</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 종목 목록 -->
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">종목 현재가</div>
+        <div style="font-size:12px;color:var(--muted);" id="lastUpdated"></div>
+      </div>
+      <div id="stockList">
+        <div class="muted" style="text-align:center;padding:2rem;">불러오는 중...</div>
+      </div>
+    </div>
+
+  </main>
+</div>
+<div id="toast" class="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/db.js"></script>
+<script>
+let stocks = [];
+
+async function init() {
+  await requireAuth();
+  checkDBConnection();
+  await loadStocks();
+}
+
+async function loadStocks() {
+  stocks = await fetchStockPrices();
+  renderStocks();
+}
+
+function renderStocks() {
+  const el = document.getElementById('stockList');
+  if (!stocks.length) {
+    el.innerHTML = '<div class="muted" style="text-align:center;padding:2rem;">등록된 종목이 없습니다. "+ 종목 추가"를 눌러 추가하세요.</div>';
+    return;
+  }
+
+  // 마지막 업데이트 시각
+  const latest = stocks.filter(s => s.updated_at && s.price > 0)
+    .sort((a,b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
+  if (latest) {
+    const d = new Date(latest.updated_at);
+    document.getElementById('lastUpdated').textContent =
+      `마지막 업데이트: ${d.toLocaleDateString('ko-KR')} ${d.toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'})}`;
+  }
+
+  el.innerHTML = stocks.map(s => {
+    const naverUrl = `https://finance.naver.com/item/main.naver?code=${s.stock_code}`;
+    const hasPrice = s.price && s.price > 0;
+    const changeCls = (s.change_rate || 0) >= 0 ? 'up' : 'dn';
+
+    return `<div style="display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:0.5px solid var(--border);flex-wrap:wrap;">
+      <!-- 종목 정보 -->
+      <div style="min-width:160px;">
+        <div style="font-weight:500;font-size:14px;">${s.stock_name}</div>
+        <div style="font-size:12px;color:var(--muted);">${s.stock_code} · <span class="badge b-hold">${s.market}</span></div>
+      </div>
+
+      <!-- 현재가 표시 -->
+      <div style="min-width:120px;">
+        <div style="font-size:18px;font-weight:500;${hasPrice?'':'color:var(--muted);'}">
+          ${hasPrice ? s.price.toLocaleString()+'원' : '미입력'}
+        </div>
+        ${hasPrice ? `<div class="${changeCls}" style="font-size:12px;">${(s.change_rate||0)>=0?'+':''}${(s.change_rate||0).toFixed(2)}%</div>` : ''}
+      </div>
+
+      <!-- 시가총액 -->
+      <div style="min-width:120px;color:var(--muted);font-size:13px;">
+        ${s.market_cap ? s.market_cap.toLocaleString()+'억원' : '시총 미입력'}
+      </div>
+
+      <!-- 입력 폼 -->
+      <div style="display:flex;gap:6px;align-items:center;flex:1;flex-wrap:wrap;min-width:300px;">
+        <input type="number" id="price-${s.stock_code}" placeholder="현재가" value="${hasPrice?s.price:''}"
+          style="width:110px;padding:6px 8px;font-size:13px;" />
+        <input type="number" id="change-${s.stock_code}" placeholder="등락률%" step="0.01" value="${s.change_rate||''}"
+          style="width:90px;padding:6px 8px;font-size:13px;" />
+        <input type="number" id="cap-${s.stock_code}" placeholder="시총(억)" value="${s.market_cap||''}"
+          style="width:110px;padding:6px 8px;font-size:13px;" />
+        <button class="btn btn-primary" style="font-size:12px;padding:6px 12px;" onclick="savePrice('${s.stock_code}','${s.stock_name}','${s.market}')">저장</button>
+        <a href="${naverUrl}" target="_blank" class="btn" style="font-size:12px;padding:6px 12px;text-decoration:none;">
+          네이버 금융 열기 ↗
+        </a>
+      </div>
+    </div>`;
+  }).join('');
+
+  // 마지막 항목 border 제거
+  const lastEl = el.querySelector('div:last-child');
+  if (lastEl) lastEl.style.borderBottom = 'none';
+}
+
+async function savePrice(code, name, market) {
+  const price     = parseInt(document.getElementById(`price-${code}`).value) || 0;
+  const changeRate= parseFloat(document.getElementById(`change-${code}`).value) || 0;
+  const marketCap = parseInt(document.getElementById(`cap-${code}`).value) || null;
+
+  if (!price) { toast('현재가를 입력하세요.'); return; }
+
+  try {
+    await upsertStockPrice({
+      stock_code: code,
+      stock_name: name,
+      market: market,
+      price: price,
+      change_rate: changeRate,
+      market_cap: marketCap,
+    });
+    toast(`${name} 현재가 저장 완료!`);
+    await loadStocks();
+  } catch(e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+function openAddForm() {
+  document.getElementById('addForm').style.display = 'block';
+  document.getElementById('add-name').focus();
+}
+
+function closeAddForm() {
+  document.getElementById('addForm').style.display = 'none';
+}
+
+async function addStock() {
+  const name   = document.getElementById('add-name').value.trim();
+  const code   = document.getElementById('add-code').value.trim();
+  const market = document.getElementById('add-market').value;
+  const price  = parseInt(document.getElementById('add-price').value) || 0;
+
+  if (!name || !code) { toast('종목명과 종목코드를 입력하세요.'); return; }
+
+  try {
+    await upsertStockPrice({ stock_code: code, stock_name: name, market, price });
+    toast(`${name} 추가 완료!`);
+    closeAddForm();
+    await loadStocks();
+  } catch(e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+async function doLogout() {
+  await sb.auth.signOut();
+  location.href = 'index.html';
+}
+
+init();
+</script>
+</body>
+</html>
