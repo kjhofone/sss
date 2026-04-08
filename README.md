@@ -1,96 +1,120 @@
-# 투자 스터디 펀드 v2 — 세팅 가이드
+# 투자 스터디 펀드 — 전체 세팅 가이드
 
-## 변경사항
-- 참여자 6명 × 10개월 샘플 데이터
-- 손실 시 100만원 복구 로직 제거 (순수 누적 방식)
-- 현재가 자동 조회 (Yahoo Finance → Edge Function)
-- 사용자 관리 페이지 추가 (admin.html)
+## 📁 파일 구조 (GitHub에 올릴 파일)
+
+```
+fund-study/                     ← GitHub 저장소 루트
+│
+├── index.html                  ← 대시보드 (메인)
+├── picks.html                  ← 탑픽 관리 (제출 + 히스토리)
+├── trade.html                  ← 매수 / 매도 입력
+├── members.html                ← 참여자 현황
+├── settle.html                 ← 결산 관리
+├── admin.html                  ← 사용자 추가/수정/탈퇴
+│
+├── css/
+│   └── style.css               ← 공통 스타일
+│
+└── js/
+    ├── config.js               ← ⚠️ 여기만 수정! (Supabase 키)
+    └── db.js                   ← DB 쿼리 함수
+```
+
+**Supabase에서 실행하는 파일 (GitHub에 올리지 않아도 됨)**
+```
+supabase_schema_v3.sql          → Supabase SQL Editor에 붙여넣기
+edge_function_stock_price.ts    → Supabase Edge Functions에 붙여넣기
+```
 
 ---
 
-## STEP 1. DB 초기화 및 샘플 데이터
+## 🚀 세팅 순서 (총 약 25분)
 
-Supabase SQL Editor에 `supabase_schema_v2.sql` 전체 붙여넣고 Run  
-→ 테이블 재생성 + 6명 × 10개월 데이터 자동 입력
-
----
-
-## STEP 2. 현재가 API (Edge Function) 배포
-
-**2-1. Supabase CLI 설치**
-```bash
-# macOS
-brew install supabase/tap/supabase
-
-# Windows (PowerShell)
-scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
-scoop install supabase
-```
-
-**2-2. 로그인 및 프로젝트 연결**
-```bash
-supabase login
-supabase link --project-ref YOUR_PROJECT_ID
-```
-
-**2-3. Edge Function 배포**
-```bash
-supabase functions deploy stock-price
-```
-
-**2-4. 배포 확인**  
-Supabase 대시보드 → Edge Functions → `stock-price` 활성화 확인
+### STEP 1. Supabase 프로젝트 생성 (5분)
+1. https://supabase.com 접속 → 회원가입 → **New Project**
+2. 프로젝트 이름: `fund-study`, 비밀번호 설정 → **Create Project**
+3. 생성 완료까지 약 1분 대기
 
 ---
 
-## STEP 3. config.js 수정
+### STEP 2. DB 테이블 + 샘플 데이터 생성 (3분)
+1. Supabase 좌측 메뉴 → **SQL Editor**
+2. `supabase_schema_v3.sql` 파일 전체 내용 붙여넣기
+3. 우측 상단 **Run** 클릭
+4. 하단에 members 목록이 나오면 성공
 
-`js/config.js`에서:
+---
+
+### STEP 3. 현재가 API (Edge Function) 등록 — CLI 불필요 (5분)
+> ⚡ 이 단계는 CLI 설치 없이 브라우저에서만 합니다
+> ⚡ 배포 후 모든 참여자가 동일하게 현재가를 조회합니다
+
+1. Supabase 좌측 메뉴 → **Edge Functions**
+2. 우측 상단 **New Function** 클릭
+3. Function name: `stock-price` 입력
+4. 에디터에 `edge_function_stock_price.ts` 파일 내용 전체 붙여넣기
+5. **Deploy** 클릭
+6. 상태가 **Active** 로 바뀌면 완료
+
+---
+
+### STEP 4. Supabase API 키 복사 (1분)
+1. Supabase 좌측 메뉴 → **Settings** → **API**
+2. **Project URL** 복사
+3. **anon public** 키 복사
+
+---
+
+### STEP 5. config.js 수정 (1분)
+`js/config.js` 파일을 열어서 아래 두 줄 수정:
 ```js
-const SUPABASE_URL  = 'https://YOUR_PROJECT_ID.supabase.co';
-const SUPABASE_ANON = 'YOUR_ANON_PUBLIC_KEY';
+const SUPABASE_URL  = 'https://여기에붙여넣기.supabase.co';
+const SUPABASE_ANON = '여기에anon키붙여넣기';
 ```
 
 ---
 
-## STEP 4. GitHub Pages 배포
-
-파일 전체를 GitHub 저장소에 올리고  
-Settings → Pages → Branch: main → Save
-
----
-
-## 현재가 동작 방식
-
-```
-브라우저 → Supabase Edge Function (stock-price)
-                ↓
-         Yahoo Finance API
-         005930.KS (KOSPI)
-         035720.KQ (KOSDAQ)
-                ↓
-         { price: 81300, change: 1.2 }
-                ↓
-브라우저 ← 현재가 표시 (5분 캐시)
-```
-
-**Edge Function이 없어도:** 현재가 칸이 `-`로 표시되고 나머지 기능은 정상 동작합니다.
+### STEP 6. GitHub 업로드 (5분)
+1. https://github.com → New repository → 이름: `fund-study` → **Public**
+2. **Add file → Upload files** 로 아래 파일들 모두 업로드:
+   ```
+   index.html, picks.html, trade.html,
+   members.html, settle.html, admin.html,
+   css/style.css, js/config.js, js/db.js
+   ```
+   (supabase_schema_v3.sql, edge_function_stock_price.ts는 올리지 않아도 됨)
+3. **Settings → Pages → Branch: main → / (root) → Save**
+4. 약 2분 후 `https://[아이디].github.io/fund-study` 접속
 
 ---
 
-## 사용자 관리 (admin.html)
-
-| 기능 | 설명 |
-|---|---|
-| 참여자 추가 | 이름, 이메일, 기준금액, 참여일 입력 |
-| 정보 수정 | 이름, 이메일, 메모 등 수정 가능 |
-| 탈퇴 처리 | `is_active = false` 처리 (데이터 보존) |
-| 수익률 요약 | 최고/평균/최저 수익률 카드 표시 |
+### STEP 7. 로그인 계정 생성 (3분)
+1. Supabase → **Authentication → Users → Invite user**
+2. 참여자 이메일 입력 → 초대 메일 발송
+3. 각자 이메일로 받은 링크에서 비밀번호 설정
 
 ---
 
-## 결산 방식 변경 (v2)
+## ✅ 완료 후 확인 체크리스트
 
-- **이전:** 손실 시 100만원으로 강제 복구  
-- **v2:** 손실/수익 그대로 기준금액에 누적  
-  예) 1,000,000 → -70,000 손실 → 기준금액 930,000원으로 다음 달 운용
+- [ ] 대시보드 접속 → DB 배너가 초록색 "연결됨" 으로 바뀜
+- [ ] 대시보드 → 참여자 6명, 이번 달 탑픽 5명 표시
+- [ ] "현재가 갱신" 버튼 클릭 → 현재가 컬럼에 숫자 표시
+- [ ] 탑픽 관리 → 월별 탭 클릭 시 데이터 변경
+- [ ] 사용자 관리 → 참여자 추가/수정 동작
+
+---
+
+## ❓ 자주 묻는 질문
+
+**Q. 현재가가 `-`로 표시돼요**
+→ Edge Function이 미등록이거나, 장 마감 후에는 마지막 종가로 표시됩니다.
+→ STEP 3을 다시 확인하세요.
+
+**Q. 로그인이 안 돼요**
+→ Supabase Authentication → Users 에서 해당 이메일 확인
+→ "Email confirmed" 가 체크되어 있는지 확인 (직접 체크 가능)
+
+**Q. 다른 참여자도 데이터를 입력할 수 있나요?**
+→ 네. 로그인만 하면 누구나 탑픽 제출, 매수/매도 입력이 가능합니다.
+→ 단, 사용자 관리(admin.html)는 운영자만 접근하도록 별도 안내 권장
