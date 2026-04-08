@@ -117,9 +117,11 @@
           </div>
         </div>
 
-        <div id="lookupError" style="display:none;padding:10px 14px;background:var(--upbg);border-radius:var(--r-md);font-size:13px;color:var(--up);">
-          <strong>조회 실패</strong> — 종목코드를 다시 확인하거나, 시장(KOSPI/KOSDAQ)을 변경 후 다시 조회해보세요.
-          현재가는 아래에서 직접 입력하세요.
+        <div id="lookupError" style="display:none;padding:12px 14px;background:var(--amberbg);border-radius:var(--r-md);font-size:13px;color:var(--amber);line-height:1.7;border:0.5px solid #f0c070;">
+          <strong>현재가 자동 조회를 사용하려면 Edge Function 배포가 필요합니다</strong><br>
+          Supabase 대시보드 → Edge Functions → New Function → 이름: <code style="background:rgba(0,0,0,0.08);padding:1px 5px;border-radius:3px;">stock-price</code><br>
+          → <code style="background:rgba(0,0,0,0.08);padding:1px 5px;border-radius:3px;">edge_function_stock_price.ts</code> 내용 붙여넣기 → Deploy<br>
+          <span style="margin-top:4px;display:block;color:var(--text);">배포 전까지는 아래 현재가 · 시총 칸에 직접 입력하세요.</span>
         </div>
 
         <!-- 목표가 -->

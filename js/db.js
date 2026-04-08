@@ -1,6 +1,7 @@
 // ============================================================
-// js/db.js  — 최종본
-// 변경: 현재가 CORS 프록시 교체 + 일정 함수 포함
+// js/db.js  v4 최종본
+// 현재가: Supabase Edge Function 우선 → 실패 시 수동입력 안내
+// 일정: submitSchedule / updateSchedule / deleteSchedule 포함
 // ============================================================
 
 // ── 참여자
@@ -45,79 +46,68 @@ async function fetchSettlements() {
   return data;
 }
 
-// ── 탑픽 제출
+// ── CRUD
 async function submitPick(payload) {
   const { data, error } = await sb.from('picks').insert(payload).select().single();
   if (error) throw error;
   return data;
 }
-
-// ── 매매 등록
 async function submitTrade(payload) {
   const { data, error } = await sb.from('trades').insert(payload).select().single();
   if (error) throw error;
   return data;
 }
-
-// ── 결산 등록
 async function submitSettlement(payload) {
   const { data, error } = await sb.from('settlements').insert(payload).select().single();
   if (error) throw error;
   return data;
 }
-
-// ── 참여자 추가/수정
 async function upsertMember(payload) {
   if (payload.id) {
     const { id, ...rest } = payload;
     const { data, error } = await sb.from('members').update(rest).eq('id', id).select().single();
     if (error) throw error;
     return data;
-  } else {
-    const { data, error } = await sb.from('members').insert(payload).select().single();
-    if (error) throw error;
-    return data;
   }
+  const { data, error } = await sb.from('members').insert(payload).select().single();
+  if (error) throw error;
+  return data;
 }
-
-// ── 참여자 탈퇴
 async function deactivateMember(id) {
   const { error } = await sb.from('members').update({ is_active: false }).eq('id', id);
   if (error) throw error;
 }
 
-// ── 현재 연월
+// ── 유틸
 function currentMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
 }
 
-// ── 참여자 통계
 async function fetchMemberStats() {
-  const members     = await fetchMembers();
-  const settlements = await fetchSettlements();
+  const [members, settlements] = await Promise.all([fetchMembers(), fetchSettlements()]);
   return members.map((m, i) => {
-    const myS       = settlements.filter(s => s.member_id === m.id);
-    const netProfit = myS.reduce((sum, s) => sum + (s.net_profit || 0), 0);
-    const returnRate= parseFloat(((m.base_amount - 1000000) / 1000000 * 100).toFixed(1));
+    const myS        = settlements.filter(s => s.member_id === m.id);
+    const netProfit  = myS.reduce((sum, s) => sum + (s.net_profit || 0), 0);
+    const returnRate = parseFloat(((m.base_amount - 1000000) / 1000000 * 100).toFixed(1));
     return { ...m, net_profit: netProfit, return_rate: returnRate, av_cls: avCls[i % 6] };
   });
 }
 
 // ============================================================
 // 현재가 조회
-// 방법 1: corsproxy.io (주 프록시)
-// 방법 2: allorigins.win (백업 프록시)
-// 둘 다 실패 시 빈 객체 반환 → UI에서 직접 입력 유도
-// 5분 캐시 적용
+// 1순위: Supabase Edge Function (stock-price)
+//        → 배포되어 있으면 서버에서 실행되므로 CORS 문제 없음
+// 2순위: 실패 시 null 반환 → UI에서 직접 입력 안내
+// 5분 캐시
 // ============================================================
 const priceCache = {};
 
 async function fetchCurrentPrices(codes) {
   if (!codes || codes.length === 0) return {};
 
-  const now   = Date.now();
-  const fresh = {};
+  const now     = Date.now();
+  const fresh   = {};
   const toFetch = [];
 
   for (const c of codes) {
@@ -129,104 +119,53 @@ async function fetchCurrentPrices(codes) {
   }
   if (toFetch.length === 0) return fresh;
 
-  // 1차: KOSPI (.KS) 시도
-  const result = await _yahooFetch(toFetch, 'KS');
+  try {
+    // Edge Function 호출 (Supabase 대시보드에서 배포한 stock-price 함수)
+    const { data, error } = await sb.functions.invoke('stock-price', {
+      body: { codes: toFetch }
+    });
+    if (error) throw new Error(error.message);
+    if (!data)  throw new Error('응답 없음');
 
-  // 2차: 못 찾은 코드 KOSDAQ (.KQ) 재시도
-  const missing = toFetch.filter(c => !result[c] || result[c].price === 0);
-  if (missing.length > 0) {
-    const result2 = await _yahooFetch(missing, 'KQ');
-    for (const [k, v] of Object.entries(result2)) {
-      if (v && v.price > 0) result[k] = v;
+    for (const [code, info] of Object.entries(data)) {
+      if (info && info.price > 0) {
+        priceCache[code] = { ts: now, data: info };
+        fresh[code] = info;
+      }
     }
+  } catch (e) {
+    console.warn('Edge Function 현재가 조회 실패:', e.message);
+    // 실패 시 빈 객체 반환 → picks.html에서 "직접 입력" 모드로 전환
   }
 
-  for (const [code, info] of Object.entries(result)) {
-    if (info && info.price > 0) {
-      priceCache[code] = { ts: now, data: info };
-      fresh[code] = info;
-    }
-  }
   return fresh;
 }
 
-async function _yahooFetch(codes, suffix) {
-  const symbols = codes.map(c => `${c}.${suffix}`).join(',');
-  const fields  = 'regularMarketPrice,regularMarketChangePercent,shortName,marketCap';
-  const yahooUrl= `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols}&fields=${fields}`;
-
-  // 프록시 목록 (순서대로 시도)
-  const proxies = [
-    `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
-    `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`,
-  ];
-
-  for (const proxyUrl of proxies) {
-    try {
-      const resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
-      if (!resp.ok) continue;
-
-      let json;
-      const text = await resp.text();
-
-      // allorigins는 { contents: "..." } 형태로 감싸서 반환
-      if (proxyUrl.includes('allorigins')) {
-        const outer = JSON.parse(text);
-        json = JSON.parse(outer.contents);
-      } else {
-        json = JSON.parse(text);
-      }
-
-      const quotes = json?.quoteResponse?.result ?? [];
-      if (quotes.length === 0) continue;
-
-      const result = {};
-      for (const q of quotes) {
-        const code = q.symbol.replace(/\.(KS|KQ)$/, '');
-        result[code] = {
-          price:     Math.round(q.regularMarketPrice ?? 0),
-          change:    parseFloat((q.regularMarketChangePercent ?? 0).toFixed(2)),
-          name:      q.shortName ?? code,
-          marketCap: q.marketCap ? Math.round(q.marketCap / 100_000_000) : null,
-        };
-      }
-      return result;  // 성공 시 즉시 반환
-
-    } catch(e) {
-      console.warn(`프록시 실패 (${proxyUrl.split('?')[0]}):`, e.message);
-      // 다음 프록시 시도
-    }
-  }
-
-  return {}; // 모든 프록시 실패
-}
-
 // ============================================================
-// 일정 관리 (schedules 테이블)
+// 일정 관리
 // ============================================================
-
 async function fetchSchedules() {
   const { data, error } = await sb
     .from('schedules')
     .select('*')
     .order('event_date', { ascending: true });
-  if (error) { console.error('fetchSchedules 오류:', error); return []; }
-  return data;
+  if (error) { console.error('fetchSchedules 오류:', error.message); return []; }
+  return data ?? [];
 }
 
 async function submitSchedule(payload) {
   const { data, error } = await sb.from('schedules').insert(payload).select().single();
-  if (error) throw error;
+  if (error) throw new Error(error.message);
   return data;
 }
 
 async function updateSchedule(id, payload) {
   const { data, error } = await sb.from('schedules').update(payload).eq('id', id).select().single();
-  if (error) throw error;
+  if (error) throw new Error(error.message);
   return data;
 }
 
 async function deleteSchedule(id) {
   const { error } = await sb.from('schedules').delete().eq('id', id);
-  if (error) throw error;
+  if (error) throw new Error(error.message);
 }
