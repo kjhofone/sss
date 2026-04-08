@@ -2,8 +2,8 @@
 // js/config.js  — Supabase 연결 설정
 // ============================================================
 // ⚠️  아래 두 값을 Supabase 대시보드 > Settings > API 에서 복사하세요
-const SUPABASE_URL    = 'https://YOUR_PROJECT_ID.supabase.co';
-const SUPABASE_ANON   = 'YOUR_ANON_PUBLIC_KEY';
+const SUPABASE_URL    = 'https://xqqrxmxjvvzxcfxmqfks.supabase.co';
+const SUPABASE_ANON   = 'sb_secret_0PJDZNomatXbx7VenH96Cw_GBx0l1ov';
 
 // Supabase 클라이언트 초기화 (CDN 버전 사용)
 const { createClient } = supabase;
