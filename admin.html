@@ -43,7 +43,6 @@
         <button class="btn" onclick="closeForm()" style="font-size:12px;">닫기</button>
       </div>
       <div class="form-section">
-        <input type="hidden" id="f-id" />
         <div class="form-row">
           <div class="form-group">
             <label>이름 *</label>
@@ -57,7 +56,7 @@
         <div class="form-row">
           <div class="form-group">
             <label>기준금액 (원)</label>
-            <input type="number" id="f-base" value="1000000" placeholder="1000000" />
+            <input type="number" id="f-base" value="1000000" />
           </div>
           <div class="form-group">
             <label>참여일</label>
@@ -70,7 +69,7 @@
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px;">
           <button class="btn" onclick="closeForm()">취소</button>
-          <button class="btn btn-primary" onclick="saveMember()">저장</button>
+          <button class="btn btn-primary" id="saveBtn" onclick="saveMember()">저장</button>
         </div>
       </div>
     </div>
@@ -84,14 +83,9 @@
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>참여자</th>
-            <th>이메일</th>
-            <th>참여일</th>
-            <th>기준금액</th>
-            <th>누적 수익률</th>
-            <th>종목 수</th>
-            <th>메모</th>
-            <th style="width:120px;">작업</th>
+            <th>참여자</th><th>이메일</th><th>참여일</th>
+            <th>기준금액</th><th>누적 수익률</th><th>종목 수</th><th>메모</th>
+            <th style="width:130px;">작업</th>
           </tr></thead>
           <tbody id="membersTbody">
             <tr><td colspan="8" class="muted" style="text-align:center;padding:1.5rem;">불러오는 중...</td></tr>
@@ -100,9 +94,7 @@
       </div>
     </div>
 
-    <!-- 수익률 요약 카드 -->
     <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:1.25rem;" id="summaryCards"></div>
-
   </main>
 </div>
 
@@ -124,9 +116,11 @@
 <script src="js/config.js"></script>
 <script src="js/db.js"></script>
 <script>
-let members    = [];
-let allPicks   = [];
-let settlements= [];
+// 현재 수정 중인 멤버 ID를 전역 변수로 관리 (hidden input 대신)
+let editingMemberId = null;
+let members = [];
+let allPicks = [];
+let settlements = [];
 
 async function init() {
   await requireAuth();
@@ -158,10 +152,7 @@ function renderMembers() {
       <td>
         <div class="flex">
           <div class="avatar ${avCls[i%6]}" style="width:30px;height:30px;font-size:11px;">${m.name.slice(0,2)}</div>
-          <div>
-            <div style="font-weight:500;">${m.name}</div>
-            <div style="font-size:11px;color:var(--muted);">참여 ${m.joined_at}</div>
-          </div>
+          <div style="font-weight:500;">${m.name}</div>
         </div>
       </td>
       <td class="muted">${m.email || '-'}</td>
@@ -183,52 +174,48 @@ function renderMembers() {
 function renderSummaryCards() {
   if (!members.length) return;
   const sorted = [...members].sort((a,b) => b.return_rate - a.return_rate);
-  const best   = sorted[0];
-  const worst  = sorted[sorted.length-1];
-  const avg    = (members.reduce((s,m) => s+m.return_rate, 0) / members.length).toFixed(1);
-  const total  = members.reduce((s,m) => s+m.base_amount, 0);
-
+  const best  = sorted[0];
+  const worst = sorted[sorted.length-1];
+  const avg   = (members.reduce((s,m) => s+m.return_rate,0)/members.length).toFixed(1);
+  const total = members.reduce((s,m) => s+m.base_amount, 0);
   document.getElementById('summaryCards').innerHTML = `
     <div class="card">
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">최고 수익률</div>
-      <div class="flex" style="gap:10px;margin-bottom:6px;">
+      <div class="flex" style="gap:10px;">
         <div class="avatar av1" style="width:32px;height:32px;font-size:12px;">${best.name.slice(0,2)}</div>
-        <div>
-          <div style="font-weight:500;">${best.name}</div>
-          <div class="up" style="font-size:18px;font-weight:500;">${pct(best.return_rate)}</div>
-        </div>
+        <div><div style="font-weight:500;">${best.name}</div><div class="up" style="font-size:18px;font-weight:500;">${pct(best.return_rate)}</div></div>
       </div>
     </div>
     <div class="card">
-      <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">전체 평균 수익률</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">전체 평균</div>
       <div style="font-size:28px;font-weight:500;" class="${rCls(avg)}">${pct(avg)}</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:4px;">총 운용 자산 ${(total/10000).toFixed(0)}만원</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px;">총 ${(total/10000).toFixed(0)}만원 운용 중</div>
     </div>
     <div class="card">
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">최저 수익률</div>
-      <div class="flex" style="gap:10px;margin-bottom:6px;">
+      <div class="flex" style="gap:10px;">
         <div class="avatar av3" style="width:32px;height:32px;font-size:12px;">${worst.name.slice(0,2)}</div>
-        <div>
-          <div style="font-weight:500;">${worst.name}</div>
-          <div class="${rCls(worst.return_rate)}" style="font-size:18px;font-weight:500;">${pct(worst.return_rate)}</div>
-        </div>
+        <div><div style="font-weight:500;">${worst.name}</div><div class="${rCls(worst.return_rate)}" style="font-size:18px;font-weight:500;">${pct(worst.return_rate)}</div></div>
       </div>
     </div>`;
 }
 
 function openForm(prefill = {}) {
-  document.getElementById('formTitle').textContent = prefill.id ? '참여자 수정' : '참여자 추가';
-  document.getElementById('f-id').value     = prefill.id     || '';
-  document.getElementById('f-name').value   = prefill.name   || '';
-  document.getElementById('f-email').value  = prefill.email  || '';
+  editingMemberId = prefill.id || null;  // 전역 변수에 저장
+  document.getElementById('formTitle').textContent = editingMemberId ? '참여자 수정' : '참여자 추가';
+  document.getElementById('f-name').value   = prefill.name        || '';
+  document.getElementById('f-email').value  = prefill.email       || '';
   document.getElementById('f-base').value   = prefill.base_amount || 1000000;
-  document.getElementById('f-joined').value = prefill.joined_at || new Date().toISOString().slice(0,10);
-  document.getElementById('f-note').value   = prefill.note   || '';
+  document.getElementById('f-joined').value = prefill.joined_at   || new Date().toISOString().slice(0,10);
+  document.getElementById('f-note').value   = prefill.note        || '';
   document.getElementById('memberForm').style.display = 'block';
   document.getElementById('f-name').focus();
+  // 폼 상단으로 스크롤
+  document.getElementById('memberForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function closeForm() {
+  editingMemberId = null;
   document.getElementById('memberForm').style.display = 'none';
 }
 
@@ -238,41 +225,56 @@ function editMember(id) {
 }
 
 async function saveMember() {
-  const id      = document.getElementById('f-id').value;
-  const name    = document.getElementById('f-name').value.trim();
-  const email   = document.getElementById('f-email').value.trim() || null;
-  const base    = parseInt(document.getElementById('f-base').value) || 1000000;
-  const joined  = document.getElementById('f-joined').value;
-  const note    = document.getElementById('f-note').value.trim() || null;
+  const name   = document.getElementById('f-name').value.trim();
+  const email  = document.getElementById('f-email').value.trim() || null;
+  const base   = parseInt(document.getElementById('f-base').value) || 1000000;
+  const joined = document.getElementById('f-joined').value;
+  const note   = document.getElementById('f-note').value.trim() || null;
 
   if (!name) { toast('이름을 입력하세요.'); return; }
 
+  document.getElementById('saveBtn').textContent = '저장 중...';
+  document.getElementById('saveBtn').disabled = true;
+
   try {
-    await upsertMember({ id: id||undefined, name, email, base_amount: base, joined_at: joined, note });
-    toast(id ? '수정 완료!' : '참여자가 추가되었습니다!');
+    if (editingMemberId) {
+      // 수정: ID를 명시적으로 전달
+      const { error } = await sb.from('members')
+        .update({ name, email, base_amount: base, joined_at: joined, note })
+        .eq('id', editingMemberId);
+      if (error) throw error;
+      toast(`${name}님 정보가 수정되었습니다.`);
+    } else {
+      // 추가
+      const { error } = await sb.from('members')
+        .insert({ name, email, base_amount: base, joined_at: joined, note });
+      if (error) throw error;
+      toast(`${name}님이 추가되었습니다!`);
+    }
     closeForm();
     await loadData();
   } catch(e) {
-    toast('오류: ' + e.message);
+    toast('오류: ' + (e.message || '저장 실패'));
+  } finally {
+    document.getElementById('saveBtn').textContent = '저장';
+    document.getElementById('saveBtn').disabled = false;
   }
 }
 
 function confirmDeactivate(id, name) {
   document.getElementById('confirmMsg').textContent =
     `${name}님을 탈퇴 처리합니다. 탈퇴 후에는 대시보드에 표시되지 않습니다. (데이터는 보존됩니다)`;
-  document.getElementById('confirmBtn').onclick = () => doDeactivate(id);
+  document.getElementById('confirmBtn').onclick = () => doDeactivate(id, name);
   document.getElementById('confirmModal').style.display = 'flex';
 }
 
-async function doDeactivate(id) {
+async function doDeactivate(id, name) {
   try {
     await deactivateMember(id);
-    toast('탈퇴 처리 완료');
+    toast(`${name}님 탈퇴 처리 완료`);
     closeModal();
     await loadData();
-  } catch(e) {
-    toast('오류: ' + e.message);
-  }
+  } catch(e) { toast('오류: ' + e.message); }
 }
 
 function closeModal() {
