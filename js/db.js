@@ -1,26 +1,19 @@
 // ============================================================
-// js/db.js  — 공통 DB 쿼리 함수
+// js/db.js v2
 // ============================================================
 
-/** 전체 참여자 목록 */
 async function fetchMembers() {
-  const { data, error } = await sb.from('members').select('*').eq('is_active', true).order('name');
+  const { data, error } = await sb.from('members').select('*').eq('is_active', true).order('joined_at');
   if (error) { console.error(error); return []; }
   return data;
 }
 
-/** 특정 월 탑픽 + 매매 정보 (뷰 사용) */
 async function fetchPicksByMonth(month) {
-  const { data, error } = await sb
-    .from('picks_with_trades')
-    .select('*')
-    .eq('month', month)
-    .order('submitted_at');
+  const { data, error } = await sb.from('picks_with_trades').select('*').eq('month', month).order('submitted_at');
   if (error) { console.error(error); return []; }
   return data;
 }
 
-/** 전체 히스토리 (최신순) */
 async function fetchAllPicks(filters = {}) {
   let q = sb.from('picks_with_trades').select('*');
   if (filters.member_id) q = q.eq('member_id', filters.member_id);
@@ -30,72 +23,114 @@ async function fetchAllPicks(filters = {}) {
   return data;
 }
 
-/** 최근 매매 내역 */
-async function fetchTrades(limit = 20) {
-  const { data, error } = await sb
-    .from('trades')
+async function fetchTrades(limit = 30) {
+  const { data, error } = await sb.from('trades')
     .select('*, members(name), picks(stock_name, month)')
-    .order('traded_at', { ascending: false })
-    .limit(limit);
+    .order('traded_at', { ascending: false }).limit(limit);
   if (error) { console.error(error); return []; }
   return data;
 }
 
-/** 결산 내역 */
 async function fetchSettlements() {
-  const { data, error } = await sb
-    .from('settlements')
+  const { data, error } = await sb.from('settlements')
     .select('*, members(name), picks(stock_name, month)')
     .order('settled_at', { ascending: false });
   if (error) { console.error(error); return []; }
   return data;
 }
 
-/** 탑픽 제출 */
 async function submitPick(payload) {
   const { data, error } = await sb.from('picks').insert(payload).select().single();
   if (error) throw error;
   return data;
 }
 
-/** 매매 내역 추가 */
 async function submitTrade(payload) {
   const { data, error } = await sb.from('trades').insert(payload).select().single();
   if (error) throw error;
   return data;
 }
 
-/** 결산 추가 */
 async function submitSettlement(payload) {
   const { data, error } = await sb.from('settlements').insert(payload).select().single();
   if (error) throw error;
   return data;
 }
 
-/** 현재 연월 반환  예: '2025-04' */
+async function upsertMember(payload) {
+  if (payload.id) {
+    const { id, ...rest } = payload;
+    const { data, error } = await sb.from('members').update(rest).eq('id', id).select().single();
+    if (error) throw error;
+    return data;
+  } else {
+    const { data, error } = await sb.from('members').insert(payload).select().single();
+    if (error) throw error;
+    return data;
+  }
+}
+
+async function deactivateMember(id) {
+  const { error } = await sb.from('members').update({ is_active: false }).eq('id', id);
+  if (error) throw error;
+}
+
 function currentMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
 }
 
-/** 참여자별 현재 평가액 계산
- *  매수 후 미매도 종목은 현재가 입력 필요 (별도 현재가 API 미연동이므로 DB 저장값 사용)
- *  여기서는 settlements 기준 누적 기준금액을 반환 */
 async function fetchMemberStats() {
-  const members = await fetchMembers();
-  const settlements = await fetchSettlements();
-
+  const members    = await fetchMembers();
+  const settlements= await fetchSettlements();
   return members.map((m, i) => {
-    const mySettles = settlements.filter(s => s.member_id === m.id);
-    const totalProfit = mySettles.reduce((sum, s) => sum + (s.net_profit || 0), 0);
-    const returnRate = m.base_amount > 0
-      ? ((totalProfit / 1000000) * 100).toFixed(1)
-      : '0.0';
-    return {
-      ...m,
-      total_profit: totalProfit,
-      return_rate: parseFloat(returnRate),
-      av_cls: avCls[i % 4]
-    };
+    const myS      = settlements.filter(s => s.member_id === m.id);
+    const netProfit= myS.reduce((sum, s) => sum + (s.net_profit || 0), 0);
+    const initBase = 1000000;
+    const returnRate = parseFloat(((m.base_amount - initBase) / initBase * 100).toFixed(1));
+    return { ...m, net_profit: netProfit, return_rate: returnRate, av_cls: avCls[i % 4] };
   });
+}
+
+// ============================================================
+// 현재가 조회 — Supabase Edge Function 경유 (Yahoo Finance)
+// ============================================================
+// 캐시: 5분
+const priceCache = {};
+
+async function fetchCurrentPrices(codes) {
+  if (!codes || codes.length === 0) return {};
+
+  const now = Date.now();
+  const fresh = {};
+  const toFetch = [];
+
+  for (const c of codes) {
+    if (priceCache[c] && (now - priceCache[c].ts) < 5 * 60 * 1000) {
+      fresh[c] = priceCache[c].data;
+    } else {
+      toFetch.push(c);
+    }
+  }
+
+  if (toFetch.length === 0) return fresh;
+
+  try {
+    // Edge Function 호출
+    const { data, error } = await sb.functions.invoke('stock-price', {
+      body: { codes: toFetch }
+    });
+
+    if (error) throw error;
+
+    for (const [code, info] of Object.entries(data || {})) {
+      priceCache[code] = { ts: now, data: info };
+      fresh[code] = info;
+    }
+  } catch (e) {
+    console.warn('현재가 조회 실패:', e.message);
+    // 실패 시 빈 객체 반환 (UI에서 '-' 표시)
+  }
+
+  return fresh;
 }
