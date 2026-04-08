@@ -1,5 +1,5 @@
 // ============================================================
-// js/db.js v2
+// js/db.js
 // ============================================================
 
 async function fetchMembers() {
@@ -81,27 +81,26 @@ function currentMonth() {
 }
 
 async function fetchMemberStats() {
-  const members    = await fetchMembers();
-  const settlements= await fetchSettlements();
+  const members     = await fetchMembers();
+  const settlements = await fetchSettlements();
   return members.map((m, i) => {
-    const myS      = settlements.filter(s => s.member_id === m.id);
-    const netProfit= myS.reduce((sum, s) => sum + (s.net_profit || 0), 0);
-    const initBase = 1000000;
-    const returnRate = parseFloat(((m.base_amount - initBase) / initBase * 100).toFixed(1));
+    const myS       = settlements.filter(s => s.member_id === m.id);
+    const netProfit = myS.reduce((sum, s) => sum + (s.net_profit || 0), 0);
+    const returnRate= parseFloat(((m.base_amount - 1000000) / 1000000 * 100).toFixed(1));
     return { ...m, net_profit: netProfit, return_rate: returnRate, av_cls: avCls[i % 4] };
   });
 }
 
 // ============================================================
-// 현재가 조회 — Supabase Edge Function 경유 (Yahoo Finance)
+// 현재가 조회 — allorigins CORS 프록시 → Yahoo Finance
+// Edge Function 없이도 동작 / 5분 캐시
 // ============================================================
-// 캐시: 5분
 const priceCache = {};
 
 async function fetchCurrentPrices(codes) {
   if (!codes || codes.length === 0) return {};
 
-  const now = Date.now();
+  const now   = Date.now();
   const fresh = {};
   const toFetch = [];
 
@@ -112,25 +111,83 @@ async function fetchCurrentPrices(codes) {
       toFetch.push(c);
     }
   }
-
   if (toFetch.length === 0) return fresh;
 
-  try {
-    // Edge Function 호출
-    const { data, error } = await sb.functions.invoke('stock-price', {
-      body: { codes: toFetch }
-    });
+  // 1차: .KS (KOSPI) 시도
+  const result = await _yahooFetch(toFetch.map(c => c + '.KS'));
 
-    if (error) throw error;
+  // 2차: 못 찾은 코드 .KQ (KOSDAQ) 재시도
+  const missing = toFetch.filter(c => !result[c] || result[c].price === 0);
+  if (missing.length > 0) {
+    const result2 = await _yahooFetch(missing.map(c => c + '.KQ'));
+    Object.assign(result, result2);
+  }
 
-    for (const [code, info] of Object.entries(data || {})) {
+  for (const [code, info] of Object.entries(result)) {
+    if (info && info.price > 0) {
       priceCache[code] = { ts: now, data: info };
       fresh[code] = info;
     }
-  } catch (e) {
-    console.warn('현재가 조회 실패:', e.message);
-    // 실패 시 빈 객체 반환 (UI에서 '-' 표시)
   }
-
   return fresh;
+}
+
+async function _yahooFetch(symbols) {
+  const result = {};
+  try {
+    const syms  = symbols.join(',');
+    const fields= 'regularMarketPrice,regularMarketChangePercent,shortName,marketCap';
+    // allorigins.win: 무료 CORS 프록시 (Yahoo Finance는 브라우저에서 직접 CORS 차단)
+    const target = encodeURIComponent(
+      `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${syms}&fields=${fields}`
+    );
+    const proxyUrl = `https://api.allorigins.win/get?url=${target}`;
+
+    const resp = await fetch(proxyUrl);
+    if (!resp.ok) throw new Error(`proxy ${resp.status}`);
+    const outer = await resp.json();
+    const json  = JSON.parse(outer.contents);
+    const quotes= json?.quoteResponse?.result ?? [];
+
+    for (const q of quotes) {
+      const code = q.symbol.replace(/\.(KS|KQ)$/, '');
+      const mcKRW= q.marketCap ?? null;
+      result[code] = {
+        price:     Math.round(q.regularMarketPrice ?? 0),
+        change:    parseFloat((q.regularMarketChangePercent ?? 0).toFixed(2)),
+        name:      q.shortName ?? code,
+        marketCap: mcKRW ? Math.round(mcKRW / 100_000_000) : null, // 억원
+      };
+    }
+  } catch(e) {
+    console.warn('Yahoo 조회 실패:', e.message);
+  }
+  return result;
+}
+
+// ============================================================
+// 일정 관리
+// ============================================================
+async function fetchSchedules() {
+  const { data, error } = await sb.from('schedules')
+    .select('*').order('event_date', { ascending: true });
+  if (error) { console.error(error); return []; }
+  return data;
+}
+
+async function submitSchedule(payload) {
+  const { data, error } = await sb.from('schedules').insert(payload).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function updateSchedule(id, payload) {
+  const { data, error } = await sb.from('schedules').update(payload).eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function deleteSchedule(id) {
+  const { error } = await sb.from('schedules').delete().eq('id', id);
+  if (error) throw error;
 }
