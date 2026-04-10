@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head><meta charset="UTF-8"><title>Yahoo v8 CORS 테스트</title></head>
+<body style="font-family:monospace;padding:20px;background:#1a1a1a;color:#eee;">
+<h3 style="color:#4fc3f7;">Yahoo Finance CORS 테스트</h3>
+<pre id="out">테스트 중...</pre>
+<script>
+const el = document.getElementById('out');
+function log(msg) { el.textContent += msg + '\n'; }
+
+async function test() {
+  const codes = ['005930', '196170'];
+  
+  // 방법 1: Yahoo Finance v8 (query2)
+  try {
+    log('[1] Yahoo Finance v8 query2...');
+    const syms = codes.map(c => c + '.KS').join(',');
+    const url = `https://query2.finance.yahoo.com/v8/finance/quote?symbols=${syms}`;
+    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const d = await r.json();
+    const results = d?.quoteResponse?.result || [];
+    if (results.length > 0) {
+      log('  ✅ 성공!');
+      results.forEach(q => {
+        log(`  ${q.symbol}: ${q.regularMarketPrice}원 (${q.regularMarketChangePercent?.toFixed(2)}%)`);
+        log(`  시총: ${q.marketCap ? Math.round(q.marketCap/100000000).toLocaleString() + '억원' : '없음'}`);
+      });
+    } else {
+      log('  ❌ 결과 없음');
+    }
+  } catch(e) { log('  ❌ 실패: ' + e.message); }
+
+  // 방법 2: Yahoo Finance v8 query1
+  try {
+    log('\n[2] Yahoo Finance v8 query1...');
+    const syms = codes.map(c => c + '.KS').join(',');
+    const url = `https://query1.finance.yahoo.com/v8/finance/quote?symbols=${syms}`;
+    const r = await fetch(url);
+    const d = await r.json();
+    const results = d?.quoteResponse?.result || [];
+    log(results.length > 0 ? '  ✅ 성공! 가격: ' + results[0]?.regularMarketPrice : '  ❌ 결과 없음');
+  } catch(e) { log('  ❌ 실패: ' + e.message); }
+
+  // 방법 3: Yahoo Finance v7 (기존)
+  try {
+    log('\n[3] Yahoo Finance v7...');
+    const syms = codes.map(c => c + '.KS').join(',');
+    const url = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${syms}&fields=regularMarketPrice,marketCap`;
+    const r = await fetch(url);
+    const d = await r.json();
+    const results = d?.quoteResponse?.result || [];
+    log(results.length > 0 ? '  ✅ 성공! 가격: ' + results[0]?.regularMarketPrice : '  ❌ 결과 없음');
+  } catch(e) { log('  ❌ 실패: ' + e.message); }
+
+  // 방법 4: Yahoo Finance spark (가벼운 엔드포인트)  
+  try {
+    log('\n[4] Yahoo Finance spark...');
+    const url = `https://query1.finance.yahoo.com/v8/finance/spark?symbols=005930.KS&range=1d&interval=1d`;
+    const r = await fetch(url);
+    const d = await r.json();
+    log(d ? '  ✅ 응답: ' + JSON.stringify(d).slice(0,100) : '  ❌ 없음');
+  } catch(e) { log('  ❌ 실패: ' + e.message); }
+
+  log('\n=== 완료 ===');
+}
+test();
+</script>
+</body>
+</html>
