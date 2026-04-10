@@ -2,8 +2,8 @@ name: 주식 현재가 자동 업데이트
 
 on:
   schedule:
-    - cron: '10 7 * * 1-5'
-    - cron: '0 3 * * 1-5'
+    - cron: '10 7 * * 1-5'   # KST 16:10 장 마감 후
+    - cron: '0 3 * * 1-5'    # KST 12:00 장중
   workflow_dispatch:
 
 jobs:
@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 패키지 설치
-        run: pip install finance-datareader requests -q
+        run: pip install finance-datareader -q
 
       - name: 주식 현재가 조회 및 DB 저장
         env:
@@ -19,8 +19,9 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           python3 - << 'PYEOF'
-          import json, os, ssl, time
+          import json, os, ssl, time, datetime
           import urllib.request
+          import FinanceDataReader as fdr
 
           SUPABASE_URL = os.environ['SUPABASE_URL']
           SERVICE_KEY  = os.environ['SUPABASE_SERVICE_KEY']
@@ -30,6 +31,7 @@ jobs:
             'apikey': SERVICE_KEY,
             'Authorization': 'Bearer ' + SERVICE_KEY,
             'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates',
           }
 
           def supabase_get(path):
@@ -41,48 +43,68 @@ jobs:
             data = json.dumps(body).encode()
             req = urllib.request.Request(
               SUPABASE_URL + '/rest/v1/stock_prices',
-              data=data,
-              headers={**sb_headers, 'Prefer': 'resolution=merge-duplicates'},
-              method='POST'
+              data=data, headers=sb_headers, method='POST'
             )
             with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
+              r.read()
               return r.status
 
+          # 1. 보유중 탑픽 종목 조회
           picks = supabase_get('/rest/v1/picks_with_trades?status=eq.hold&select=stock_code,stock_name,market')
           codes = {}
           for p in picks:
             if p.get('stock_code'):
-              codes[p['stock_code']] = {'name': p.get('stock_name',''), 'market': p.get('market','KOSPI')}
+              codes[p['stock_code']] = {
+                'name':   p.get('stock_name', ''),
+                'market': p.get('market', 'KOSPI'),
+              }
 
           if not codes:
-            print('보유중 종목 없음')
+            print('보유중 종목 없음 — 종료')
             exit(0)
 
-          print(f'조회 종목: {list(codes.keys())}')
+          print(f'조회 종목 {len(codes)}개: {list(codes.keys())}')
 
-          import FinanceDataReader as fdr
-          import datetime
-
-          today = datetime.date.today().strftime('%Y-%m-%d')
-          yesterday = (datetime.date.today() - datetime.timedelta(days=7)).strftime('%Y-%m-%d')
+          # 2. FinanceDataReader로 현재가 + 시가총액 조회
+          today    = datetime.date.today().strftime('%Y-%m-%d')
+          week_ago = (datetime.date.today() - datetime.timedelta(days=7)).strftime('%Y-%m-%d')
+          now_iso  = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
           rows = []
           for code, info in codes.items():
             try:
-              df = fdr.DataReader(code, yesterday, today)
+              # 주가 데이터
+              df = fdr.DataReader(code, week_ago, today)
               if df.empty:
-                print(f'  {code}: 데이터 없음')
+                print(f'  {code}: 주가 데이터 없음')
                 continue
-              row = df.iloc[-1]
-              close_col = 'Close' if 'Close' in df.columns else 'close'
-              price = int(row[close_col])
-              
-              # 등락률 계산
+
+              close_col = 'Close' if 'Close' in df.columns else df.columns[3]
+              price = int(df.iloc[-1][close_col])
+
+              change = 0.0
               if len(df) >= 2:
                 prev = int(df.iloc[-2][close_col])
-                change = round((price - prev) / prev * 100, 2) if prev > 0 else 0
-              else:
-                change = 0
+                change = round((price - prev) / prev * 100, 2) if prev > 0 else 0.0
+
+              # 시가총액: KRX 상장종목 정보에서 가져오기
+              market_cap = None
+              try:
+                listing = fdr.StockListing('KRX')
+                match = listing[listing['Code'] == code]
+                if not match.empty:
+                  cap_col = None
+                  for col in ['Marcap', 'MarCap', 'marcap', 'market_cap', 'Cap']:
+                    if col in match.columns:
+                      cap_col = col
+                      break
+                  if cap_col:
+                    cap_val = match.iloc[0][cap_col]
+                    if cap_val and cap_val > 0:
+                      # 단위가 원이면 억원으로, 이미 억원이면 그대로
+                      market_cap = int(cap_val // 100000000) if cap_val > 100000000000 else int(cap_val)
+              except Exception as e:
+                print(f'  {code} 시총 조회 실패: {e}')
 
               rows.append({
                 'stock_code':  code,
@@ -90,19 +112,27 @@ jobs:
                 'market':      info['market'],
                 'price':       price,
                 'change_rate': change,
-                'market_cap':  None,
-                'updated_at':  'now()',
+                'market_cap':  market_cap,
+                'updated_at':  now_iso,
               })
-              print(f'  {code} {info["name"]}: {price:,}원 ({change:+.2f}%)')
-              time.sleep(0.2)
+
+              cap_str = f'{market_cap:,}억원' if market_cap else '시총없음'
+              print(f'  {code} {info["name"]}: {price:,}원 ({change:+.2f}%) 시총 {cap_str}')
+              time.sleep(0.3)
+
             except Exception as e:
               print(f'  {code} 실패: {e}')
 
+          # 3. DB 저장
           if not rows:
             print('저장할 데이터 없음')
             exit(1)
 
+          print(f'\n{len(rows)}건 DB 저장 중...')
           status = supabase_upsert(rows)
-          print(f'DB 저장 완료 {len(rows)}건 HTTP {status}')
+          if status in (200, 201):
+            print(f'✅ 저장 완료 (HTTP {status})')
+          else:
+            print(f'⚠️ 상태코드: {status}')
+            exit(1)
           PYEOF
-
