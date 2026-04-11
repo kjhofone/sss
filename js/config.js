@@ -141,4 +141,4 @@ async function doLogout() {
 // ============================================================
 // ⚠️  아래 두 값을 설정하세요
 window.GH_PAT  = 'YOUR_GITHUB_PAT';   // GitHub PAT (ghp_로 시작)
-window.GH_REPO = 'YOUR_GITHUB_ID/fund-study';  // 예: kjhofone/fund-study
+window.GH_REPO = 'kjhofone/sss';  // 예: kjhofone/fund-study
