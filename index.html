@@ -127,26 +127,26 @@ async function init() {
   refreshPrices();
 }
 
-// ── 현재가 갱신: GitHub Actions 트리거 → 완료 후 DB에서 조회
+// ── 현재가 갱신: GitHub Actions → DB 조회
 async function triggerAndRefresh() {
   const btn = document.getElementById('priceRefreshBtn');
+  if (!btn) return;
   btn.disabled = true;
 
-  const pat  = await getAppSetting('gh_pat');
-  const repo = window.GH_REPO;
+  let pat = null;
+  try { pat = await getAppSetting('gh_pat'); } catch(e) {}
+  const repo = window.GH_REPO || '';
 
-  // PAT 없으면 DB에서 바로 조회
-  if (!pat || !repo || repo.includes('YOUR_GITHUB_ID')) {
+  if (!pat || repo.includes('YOUR_GITHUB_ID')) {
     btn.textContent = '조회 중...';
-    await refreshPricesFromDB();
+    await refreshPrices();
     btn.disabled = false;
     btn.textContent = '현재가 갱신';
     return;
   }
 
-  // PAT 있으면 GitHub Actions 트리거 후 DB 조회
   btn.textContent = '업데이트 중...';
-  document.getElementById('priceUpdated').textContent = 'GitHub Actions 실행 중 (약 60초)...';
+  document.getElementById('priceUpdated').textContent = 'Actions 실행 중 (약 60초)...';
 
   try {
     const res = await fetch(
@@ -162,9 +162,9 @@ async function triggerAndRefresh() {
       }
     );
     if (res.status === 204) {
-      document.getElementById('priceUpdated').textContent = '업데이트 중... 약 60초 후 완료';
+      document.getElementById('priceUpdated').textContent = '업데이트 중... 60초 후 완료';
       setTimeout(async () => {
-        await refreshPricesFromDB();
+        await refreshPrices();
         btn.disabled = false;
         btn.textContent = '현재가 갱신';
       }, 65000);
@@ -172,15 +172,14 @@ async function triggerAndRefresh() {
       throw new Error(`HTTP ${res.status}`);
     }
   } catch(e) {
-    toast('Actions 실패, DB에서 조회합니다: ' + e.message);
-    await refreshPricesFromDB();
+    toast('Actions 실패, DB에서 조회합니다.');
+    await refreshPrices();
     btn.disabled = false;
     btn.textContent = '현재가 갱신';
   }
 }
 
-// DB에서 현재가 조회 후 테이블 갱신
-async function refreshPricesFromDB() {
+async function refreshPrices() {
   const holdPicks = currentPicks.filter(p => p.status === 'hold' && p.stock_code);
   if (!holdPicks.length) return;
   const codes = [...new Set(holdPicks.map(p => p.stock_code))];
@@ -192,12 +191,122 @@ async function refreshPricesFromDB() {
     `현재가 ${t.getHours()}:${String(t.getMinutes()).padStart(2,'0')} 기준`;
 }
 
-async function refreshPrices() {
-  await refreshPricesFromDB();
+
+function renderMetrics(members, picks) {
+  const totalBase   = members.reduce((s,m) => s + m.base_amount, 0);
+  const totalProfit = members.reduce((s,m) => s + m.net_profit, 0);
+  const avgReturn   = members.length
+    ? (members.reduce((s,m) => s + m.return_rate, 0) / members.length).toFixed(1) : 0;
+
+  document.getElementById('totalAsset').textContent = won(totalBase);
+  document.getElementById('totalProfit').textContent = `초기 대비 ${totalProfit>=0?'+':''}${won(totalProfit)}`;
+  document.getElementById('avgReturn').textContent = pct(avgReturn);
+  document.getElementById('avgReturn').className   = 'metric-value ' + rCls(avgReturn);
+  document.getElementById('memberCount').textContent = members.length + '명';
+
+  const submitted = picks.length;
+  const missing   = members.filter(m => !picks.find(p => p.member_id === m.id));
+  document.getElementById('pickStatus').textContent = `${submitted} / ${members.length}`;
+  document.getElementById('pickMissing').innerHTML  = missing.length
+    ? `<span class="badge b-warn">${missing.map(m=>m.name).join(', ')} 미제출</span>`
+    : '<span class="badge b-sold">전원 제출 완료</span>';
+}
+
+function renderPicksTable(picks, prices) {
+  const tbody = document.getElementById('picksTbody');
+  if (!picks.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;padding:1.5rem;">이번 달 탑픽이 없습니다</td></tr>';
+    return;
+  }
+  tbody.innerHTML = picks.map((p, i) => {
+    const priceInfo = prices[p.stock_code];
+    const curPrice  = priceInfo?.price;
+    const dayChange = priceInfo?.change;
+
+    // 현재가가 있으면 실시간 수익률, 없으면 확정 수익률
+    let rateVal, rateStr;
+    if (p.status === 'hold' && curPrice && p.buy_price) {
+      rateVal = ((curPrice - p.buy_price) / p.buy_price * 100);
+      rateStr = pct(rateVal);
+    } else {
+      rateVal = p.realized_return;
+      rateStr = pct(rateVal);
+    }
+
+    const upside = p.target_price && (curPrice || p.buy_price)
+      ? (((p.target_price - (curPrice||p.buy_price)) / (curPrice||p.buy_price)) * 100).toFixed(1)
+      : null;
+
+    const statusBadge = p.status === 'sold'
+      ? '<span class="badge b-sold">매도완료</span>'
+      : '<span class="badge b-hold">보유중</span>';
+
+    const dayChangeEl = dayChange != null
+      ? `<span style="font-size:11px;" class="${rCls(dayChange)}">${dayChange>=0?'+':''}${dayChange}%</span>`
+      : '<span class="muted" style="font-size:11px;">-</span>';
+
+    return `<tr>
+      <td><div class="flex"><div class="avatar ${avCls[i%6]}">${(p.member_name||'').slice(0,2)}</div>${p.member_name}</div></td>
+      <td style="font-weight:500;">${p.stock_name}<br><span style="font-size:11px;color:var(--muted);">${p.stock_code||''}</span></td>
+      <td>${won(p.buy_price)}</td>
+      <td>${curPrice ? won(curPrice) : '<span class="muted">-</span>'}</td>
+      <td>${dayChangeEl}</td>
+      <td class="${rCls(rateVal)}">${rateStr}</td>
+      <td style="color:var(--green);">${p.target_price ? won(p.target_price)+(upside?`<br><span style="font-size:11px;">(+${upside}%)</span>`:'') : '-'}</td>
+      <td>${statusBadge}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderMemberBars(members) {
+  const sorted = [...members].sort((a,b) => b.return_rate - a.return_rate);
+  const maxAbs = Math.max(...sorted.map(m => Math.abs(m.return_rate)), 1);
+  document.getElementById('memberBars').innerHTML = sorted.map((m, i) => {
+    const w = Math.round(Math.abs(m.return_rate) / maxAbs * 100);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;background:var(--bg);border-radius:var(--r-md);">
+      <div class="avatar ${avCls[i%6]}" style="width:28px;height:28px;font-size:11px;">${m.name.slice(0,2)}</div>
+      <div style="font-size:13px;font-weight:500;width:52px;flex-shrink:0;">${m.name}</div>
+      <div style="flex:1;height:6px;background:var(--border);border-radius:4px;overflow:hidden;">
+        <div class="prog-bar ${m.return_rate>=0?'bar-up':'bar-dn'}" style="width:${w}%;"></div>
+      </div>
+      <div class="${rCls(m.return_rate)}" style="font-size:12px;min-width:46px;text-align:right;">${pct(m.return_rate)}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderNotices(members, picks) {
+  const items = [];
+  const missing = members.filter(m => !picks.find(p => p.member_id === m.id));
+  if (missing.length) items.push(`<div class="notice"><div class="nd nd-warn"></div>${missing.map(m=>m.name).join(', ')}님 탑픽 미제출</div>`);
+  members.filter(m => m.return_rate < 0).forEach(m =>
+    items.push(`<div class="notice"><div class="nd nd-info"></div>${m.name}님 누적 ${pct(m.return_rate)} · 손실 중</div>`)
+  );
+  document.getElementById('notices').innerHTML = items.length
+    ? items.join('') : '<div class="notice"><div class="nd nd-ok"></div>특이사항 없음</div>';
+}
+
+function renderTradesTable(trades) {
+  const tbody = document.getElementById('tradesTbody');
+  if (!trades.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:1.5rem;">매매 내역이 없습니다</td></tr>';
+    return;
+  }
+  tbody.innerHTML = trades.map(t => {
+    const d = new Date(t.traded_at);
+    const ds = `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+    return `<tr>
+      <td class="muted">${ds}</td>
+      <td>${t.members?.name||'-'}</td>
+      <td style="font-weight:500;">${t.stock_name}</td>
+      <td>${t.trade_type==='buy'?'<span class="badge b-buy">매수</span>':'<span class="badge b-sell">매도</span>'}</td>
+      <td>${won(t.price)}</td>
+      <td>${t.quantity}주</td>
+      <td>${won(t.price*t.quantity)}</td>
+    </tr>`;
+  }).join('');
 }
 
 init();
-
 </script>
 </body>
 </html>
