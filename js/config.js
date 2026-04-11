@@ -67,25 +67,32 @@ function showAuthOverlay() {
     <div class="auth-box">
       <div class="auth-title">투자 스터디 로그인</div>
       <div class="form-section">
-        <div class="form-group"><label>이메일</label>
-          <input type="email" id="auth-email" placeholder="example@email.com" /></div>
+        <div class="form-group"><label>아이디</label>
+          <input type="text" id="auth-id" placeholder="아이디 입력"
+            onkeydown="if(event.key==='Enter')document.getElementById('auth-pw').focus()" /></div>
         <div class="form-group"><label>비밀번호</label>
           <input type="password" id="auth-pw" placeholder="비밀번호"
             onkeydown="if(event.key==='Enter')doLogin()" /></div>
-        <button class="btn btn-primary" style="width:100%;" onclick="doLogin()">로그인</button>
-        <div id="auth-err" style="font-size:12px;color:#a32d2d;text-align:center;min-height:16px;"></div>
+        <button class="btn btn-primary" style="width:100%;margin-top:4px;" onclick="doLogin()">로그인</button>
+        <div id="auth-err" style="font-size:12px;color:#a32d2d;text-align:center;min-height:16px;margin-top:8px;"></div>
       </div>
     </div>`;
   document.body.appendChild(overlay);
-  setTimeout(() => document.getElementById('auth-email')?.focus(), 100);
+  setTimeout(() => document.getElementById('auth-id')?.focus(), 100);
 }
 async function doLogin() {
-  const email = document.getElementById('auth-email')?.value;
-  const pw    = document.getElementById('auth-pw')?.value;
-  if (!email || !pw) { document.getElementById('auth-err').textContent = '이메일과 비밀번호를 입력하세요.'; return; }
+  const userId = (document.getElementById('auth-id')?.value || '').trim();
+  const pw     = (document.getElementById('auth-pw')?.value || '');
+  const errEl  = document.getElementById('auth-err');
+  if (!userId || !pw) { errEl.textContent = '아이디와 비밀번호를 입력하세요.'; return; }
+
+  // 아이디를 이메일 형식으로 변환 (아이디@study.local)
+  const email = userId.includes('@') ? userId : `${userId}@study.local`;
+
+  errEl.textContent = '';
   const { error } = await sb.auth.signInWithPassword({ email, password: pw });
   if (error) {
-    document.getElementById('auth-err').textContent = '이메일 또는 비밀번호가 올바르지 않습니다.';
+    errEl.textContent = '아이디 또는 비밀번호가 올바르지 않습니다.';
   } else {
     document.getElementById('auth-overlay')?.remove();
     location.reload();
@@ -95,3 +102,45 @@ async function doLogout() {
   await sb.auth.signOut();
   location.href = 'index.html';
 }
+
+// ── 햄버거 메뉴 (모바일)
+(function() {
+  function initHamburger() {
+    const sidebar = document.querySelector('.sidebar');
+    if (!sidebar) return;
+
+    // 햄버거 버튼 생성
+    const btn = document.createElement('button');
+    btn.className = 'hamburger';
+    btn.setAttribute('aria-label', '메뉴');
+    btn.innerHTML = '<span></span><span></span><span></span>';
+    sidebar.appendChild(btn);
+
+    btn.addEventListener('click', () => {
+      const isOpen = sidebar.classList.toggle('nav-open');
+      btn.classList.toggle('open', isOpen);
+    });
+
+    // 메뉴 항목 클릭 시 드로어 닫기
+    sidebar.querySelectorAll('.nav-item').forEach(item => {
+      item.addEventListener('click', () => {
+        sidebar.classList.remove('nav-open');
+        btn.classList.remove('open');
+      });
+    });
+
+    // 외부 클릭 시 드로어 닫기
+    document.addEventListener('click', (e) => {
+      if (!sidebar.contains(e.target)) {
+        sidebar.classList.remove('nav-open');
+        btn.classList.remove('open');
+      }
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initHamburger);
+  } else {
+    initHamburger();
+  }
+})();
