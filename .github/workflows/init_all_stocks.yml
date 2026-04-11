@@ -1,7 +1,7 @@
 name: 전종목 초기 적재 (최초 1회 실행)
 
 on:
-  workflow_dispatch:  # 수동 실행만
+  workflow_dispatch:
 
 jobs:
   init-stocks:
@@ -42,76 +42,71 @@ jobs:
               r.read()
               return r.status
 
-          # 1. 전종목 리스트 가져오기
+          now_iso = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+
           print('전종목 리스트 로딩...')
           kospi  = fdr.StockListing('KOSPI')
           kosdaq = fdr.StockListing('KOSDAQ')
-
           print(f'KOSPI: {len(kospi)}개, KOSDAQ: {len(kosdaq)}개')
-          print(f'KOSPI 컬럼: {list(kospi.columns)}')
 
-          # 컬럼명 확인 후 코드/이름 추출
-          def get_col(df, candidates):
-            for c in candidates:
-              if c in df.columns:
-                return c
-            return df.columns[0]
-
-          code_col  = get_col(kospi, ['Code','code','Symbol','symbol','종목코드'])
-          name_col  = get_col(kospi, ['Name','name','종목명','StockName'])
-          cap_col   = get_col(kospi, ['Marcap','MarCap','marcap','시가총액'])
-
-          print(f'사용 컬럼 — 코드:{code_col}, 이름:{name_col}, 시총:{cap_col}')
-
-          # 2. 종목 리스트 정리
           all_stocks = []
           for df, market in [(kospi, 'KOSPI'), (kosdaq, 'KOSDAQ')]:
-            c_col = get_col(df, ['Code','code','Symbol','symbol','종목코드'])
-            n_col = get_col(df, ['Name','name','종목명','StockName'])
-            mk_col = None
-            for mc in ['Marcap','MarCap','marcap','시가총액']:
-              if mc in df.columns:
-                mk_col = mc
-                break
             for _, row in df.iterrows():
-              code = str(row[c_col]).strip().zfill(6)
-              name = str(row[n_col]).strip()
-              if not code or not name or code == 'nan':
+              code = str(row.get('Code', '')).strip().zfill(6)
+              name = str(row.get('Name', '')).strip()
+              if not code or not name or code == '000000' or name == 'nan':
                 continue
-              cap = None
-              if mk_col:
-                try:
-                  v = float(row[mk_col])
-                  cap = int(v // 100_000_000) if v > 100_000_000_000 else int(v)
-                except:
-                  pass
+
+              # 현재가
+              price = 0
+              try:
+                v = row.get('Close', 0)
+                if v and float(v) > 0:
+                  price = int(float(v))
+              except: pass
+
+              # 시가총액 (원 단위 → 억원, 항상 // 100_000_000)
+              market_cap = None
+              try:
+                v = row.get('Marcap', 0)
+                if v and float(v) > 0:
+                  market_cap = int(float(v) // 100_000_000)
+              except: pass
+
+              # 등락률
+              change_rate = 0.0
+              try:
+                v = row.get('ChagesRatio', 0)
+                if v:
+                  change_rate = round(float(v), 2)
+              except: pass
+
               all_stocks.append({
-                'stock_code': code,
-                'stock_name': name,
-                'market':     market,
-                'price':      0,
-                'change_rate': 0.0,
-                'market_cap': cap,
-                'updated_at': '2000-01-01T00:00:00Z',  # 가격 미업데이트 표시
+                'stock_code':  code,
+                'stock_name':  name,
+                'market':      market,
+                'price':       price,
+                'change_rate': change_rate,
+                'market_cap':  market_cap,
+                'updated_at':  now_iso if price > 0 else '2000-01-01T00:00:00Z',
               })
 
-          print(f'\n총 {len(all_stocks)}개 종목 준비')
+          has_price = sum(1 for s in all_stocks if s['price'] > 0)
+          print(f'총 {len(all_stocks)}개 (현재가 있음: {has_price}개)')
 
-          # 3. 배치로 DB 저장 (100개씩)
+          # 100개씩 배치 저장
           BATCH = 100
-          total = len(all_stocks)
-          ok_count = 0
-
-          for i in range(0, total, BATCH):
+          saved = 0
+          for i in range(0, len(all_stocks), BATCH):
             batch = all_stocks[i:i+BATCH]
             try:
-              status = supabase_upsert_batch(batch)
-              ok_count += len(batch)
+              supabase_upsert_batch(batch)
+              saved += len(batch)
               if (i // BATCH) % 10 == 0:
-                print(f'  진행: {ok_count}/{total} ({ok_count/total*100:.0f}%)')
+                print(f'  진행: {saved}/{len(all_stocks)} ({saved/len(all_stocks)*100:.0f}%)')
             except Exception as e:
-              print(f'  배치 {i}-{i+BATCH} 실패: {e}')
-            time.sleep(0.05)  # API 레이트 제한 방지
+              print(f'  배치 오류: {e}')
+            time.sleep(0.05)
 
-          print(f'\n✅ 완료: {ok_count}/{total}개 저장')
+          print(f'✅ 완료: {saved}/{len(all_stocks)}개 저장')
           PYEOF

@@ -35,12 +35,7 @@ jobs:
             'Prefer': 'resolution=merge-duplicates',
           }
 
-          def supabase_get(path):
-            req = urllib.request.Request(SUPABASE_URL + path, headers=sb_headers)
-            with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
-              return json.loads(r.read())
-
-          def supabase_upsert(rows):
+          def supabase_upsert_batch(rows):
             data = json.dumps(rows).encode()
             req = urllib.request.Request(
               SUPABASE_URL + '/rest/v1/stock_prices',
@@ -50,76 +45,57 @@ jobs:
               r.read()
               return r.status
 
-          # 1. 전체 종목 조회
-          all_stocks = supabase_get('/rest/v1/stock_prices?select=stock_code,stock_name,market&limit=5000')
-          print(f'DB 등록 종목: {len(all_stocks)}개')
+          now_iso = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
-          if not all_stocks:
-            print('종목 없음 — init_all_stocks.yml 먼저 실행하세요')
-            exit(0)
+          # KRX 전종목 시세 한 번에 로딩
+          print('KRX 전종목 시세 로딩...')
+          kospi  = fdr.StockListing('KOSPI')
+          kosdaq = fdr.StockListing('KOSDAQ')
+          print(f'KOSPI: {len(kospi)}개, KOSDAQ: {len(kosdaq)}개')
 
-          # 2. FDR로 전체 현재가 조회 (KRX 일괄 조회가 가장 빠름)
-          today    = datetime.date.today().strftime('%Y-%m-%d')
-          week_ago = (datetime.date.today() - datetime.timedelta(days=7)).strftime('%Y-%m-%d')
-          now_iso  = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-
-          # KRX 전체 시세 한 번에 가져오기 (개별 조회보다 훨씬 빠름)
-          print('KRX 전체 시세 로딩...')
-          krx_prices = {}
-          krx_caps   = {}
-
-          try:
-            import pandas as pd
-            kospi_list  = fdr.StockListing('KOSPI')
-            kosdaq_list = fdr.StockListing('KOSDAQ')
-
-            for df in [kospi_list, kosdaq_list]:
-              # 컬럼명 자동 감지
-              code_col  = next((c for c in ['Code','code','Symbol'] if c in df.columns), df.columns[0])
-              close_col = next((c for c in ['Close','close','Adj Close','현재가','종가'] if c in df.columns), None)
-              cap_col   = next((c for c in ['Marcap','MarCap','marcap','시가총액'] if c in df.columns), None)
-              chg_col   = next((c for c in ['ChgRatio','chgRatio','등락률','Change'] if c in df.columns), None)
-
-              for _, row in df.iterrows():
-                code = str(row[code_col]).strip().zfill(6)
-                if close_col and row[close_col]:
-                  try: krx_prices[code] = int(float(row[close_col]))
-                  except: pass
-                if cap_col and row[cap_col]:
-                  try:
-                    v = float(row[cap_col])
-                    krx_caps[code] = int(v // 100_000_000) if v > 100_000_000_000 else int(v)
-                  except: pass
-
-            print(f'KRX 시세 로드: {len(krx_prices)}개')
-          except Exception as e:
-            print(f'KRX 전체 시세 실패: {e}')
-            print('개별 종목 조회로 전환...')
-
-          # 3. DB 업데이트
           rows = []
-          updated = 0
-          skipped = 0
+          for df, market in [(kospi, 'KOSPI'), (kosdaq, 'KOSDAQ')]:
+            for _, row in df.iterrows():
+              code = str(row.get('Code', '')).strip().zfill(6)
+              name = str(row.get('Name', '')).strip()
+              if not code or not name or code == '000000' or name == 'nan':
+                continue
 
-          for s in all_stocks:
-            code = s['stock_code']
-            price = krx_prices.get(code, 0)
+              price = 0
+              try:
+                v = row.get('Close', 0)
+                if v and float(v) > 0:
+                  price = int(float(v))
+              except: pass
 
-            if price > 0:
+              if price == 0:
+                continue  # 가격 없는 종목 스킵
+
+              market_cap = None
+              try:
+                v = row.get('Marcap', 0)
+                if v and float(v) > 0:
+                  market_cap = int(float(v) // 100_000_000)
+              except: pass
+
+              change_rate = 0.0
+              try:
+                v = row.get('ChagesRatio', 0)
+                if v:
+                  change_rate = round(float(v), 2)
+              except: pass
+
               rows.append({
                 'stock_code':  code,
-                'stock_name':  s['stock_name'],
-                'market':      s['market'],
+                'stock_name':  name,
+                'market':      market,
                 'price':       price,
-                'change_rate': 0.0,
-                'market_cap':  krx_caps.get(code),
+                'change_rate': change_rate,
+                'market_cap':  market_cap,
                 'updated_at':  now_iso,
               })
-              updated += 1
-            else:
-              skipped += 1
 
-          print(f'업데이트: {updated}개, 가격없음: {skipped}개')
+          print(f'현재가 있는 종목: {len(rows)}개')
 
           # 100개씩 배치 저장
           BATCH = 100
@@ -127,13 +103,13 @@ jobs:
           for i in range(0, len(rows), BATCH):
             batch = rows[i:i+BATCH]
             try:
-              supabase_upsert(batch)
+              supabase_upsert_batch(batch)
               saved += len(batch)
               if (i // BATCH) % 20 == 0:
-                print(f'  저장 진행: {saved}/{len(rows)}')
+                print(f'  저장: {saved}/{len(rows)}')
             except Exception as e:
               print(f'  배치 오류: {e}')
             time.sleep(0.05)
 
-          print(f'\n✅ 완료: {saved}개 현재가 업데이트')
+          print(f'✅ 완료: {saved}개 업데이트')
           PYEOF
