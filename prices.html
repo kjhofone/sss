@@ -16,14 +16,14 @@
       </svg>
       투자 스터디
     </a>
-    <a href="index.html"    class="nav-item"><div class="nav-dot g"></div>대시보드</a>
-    <a href="picks.html"    class="nav-item"><div class="nav-dot"></div>탑픽 관리</a>
-    <a href="trade.html"    class="nav-item"><div class="nav-dot r"></div>매수 / 매도</a>
-    <a href="members.html"  class="nav-item"><div class="nav-dot"></div>참여자 현황</a>
-    <a href="settle.html"   class="nav-item"><div class="nav-dot a"></div>결산 관리</a>
-    <a href="prices.html"   class="nav-item active"><div class="nav-dot g"></div>현재가 관리</a>
+    <a href="index.html" class="nav-item"><div class="nav-dot g"></div>대시보드</a>
+    <a href="picks.html" class="nav-item"><div class="nav-dot"></div>탑픽 관리</a>
+    <a href="trade.html" class="nav-item"><div class="nav-dot r"></div>매수 / 매도</a>
+    <a href="members.html" class="nav-item"><div class="nav-dot"></div>참여자 현황</a>
+    <a href="settle.html" class="nav-item"><div class="nav-dot a"></div>결산 관리</a>
+    <a href="prices.html" class="nav-item active"><div class="nav-dot g"></div>현재가 관리</a>
     <a href="schedule.html" class="nav-item"><div class="nav-dot g"></div>스터디 일정</a>
-    <a href="admin.html"    class="nav-item"><div class="nav-dot"></div>사용자 관리</a>
+    <a href="admin.html" class="nav-item"><div class="nav-dot"></div>사용자 관리</a>
     <div class="sidebar-spacer"></div>
     <div class="sidebar-footer">
       <button class="btn" style="width:100%;font-size:12px;" onclick="doLogout()">로그아웃</button>
@@ -48,32 +48,6 @@
 
     <!-- 상태 배너 -->
     <div id="statusBanner" style="display:none;padding:12px 16px;border-radius:var(--r-md);font-size:13px;margin-bottom:1.25rem;line-height:1.6;"></div>
-
-    <!-- GitHub PAT 설정 -->
-    <div class="card" style="margin-bottom:1.25rem;">
-      <div class="card-head">
-        <div class="card-title">
-          즉시 업데이트 설정
-          <span id="patStatus" style="font-size:12px;font-weight:400;margin-left:8px;"></span>
-        </div>
-        <button class="btn" style="font-size:12px;" onclick="togglePatForm()">설정 변경</button>
-      </div>
-      <div id="patForm" style="display:none;margin-top:8px;">
-        <div style="font-size:13px;color:var(--muted);margin-bottom:12px;line-height:1.7;">
-          GitHub PAT를 입력하면 모든 참여자가 즉시 업데이트 버튼을 사용할 수 있습니다.<br>
-          PAT는 Supabase DB에 저장됩니다. (RLS로 로그인한 사용자만 접근 가능)<br>
-          <strong>발급:</strong> GitHub 프로필 → Settings → Developer settings →
-          Personal access tokens → Tokens (classic) → <strong>workflow</strong> 권한 체크
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <input type="password" id="patInput" placeholder="ghp_로 시작하는 토큰 입력"
-            style="flex:1;min-width:200px;padding:8px 12px;font-size:13px;" />
-          <button class="btn btn-primary" onclick="savePat()">저장</button>
-          <button class="btn" onclick="clearPat()"
-            style="color:var(--up);border-color:var(--up);">삭제</button>
-        </div>
-      </div>
-    </div>
 
     <!-- 안내 -->
     <div style="background:#e8f4fd;border:0.5px solid #b5d4f4;border-radius:var(--r-lg);padding:12px 16px;margin-bottom:1.25rem;font-size:13px;color:#0c447c;line-height:1.7;">
