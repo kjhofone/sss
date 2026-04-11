@@ -1,0 +1,117 @@
+name: 전종목 초기 적재 (최초 1회 실행)
+
+on:
+  workflow_dispatch:  # 수동 실행만
+
+jobs:
+  init-stocks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 패키지 설치
+        run: pip install finance-datareader -q
+
+      - name: KOSPI + KOSDAQ 전종목 DB 저장
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          python3 - << 'PYEOF'
+          import json, os, ssl, time, datetime
+          import urllib.request
+          import FinanceDataReader as fdr
+
+          SUPABASE_URL = os.environ['SUPABASE_URL']
+          SERVICE_KEY  = os.environ['SUPABASE_SERVICE_KEY']
+          ctx = ssl.create_default_context()
+
+          sb_headers = {
+            'apikey': SERVICE_KEY,
+            'Authorization': 'Bearer ' + SERVICE_KEY,
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates',
+          }
+
+          def supabase_upsert_batch(rows):
+            data = json.dumps(rows).encode()
+            req = urllib.request.Request(
+              SUPABASE_URL + '/rest/v1/stock_prices',
+              data=data, headers=sb_headers, method='POST'
+            )
+            with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
+              r.read()
+              return r.status
+
+          # 1. 전종목 리스트 가져오기
+          print('전종목 리스트 로딩...')
+          kospi  = fdr.StockListing('KOSPI')
+          kosdaq = fdr.StockListing('KOSDAQ')
+
+          print(f'KOSPI: {len(kospi)}개, KOSDAQ: {len(kosdaq)}개')
+          print(f'KOSPI 컬럼: {list(kospi.columns)}')
+
+          # 컬럼명 확인 후 코드/이름 추출
+          def get_col(df, candidates):
+            for c in candidates:
+              if c in df.columns:
+                return c
+            return df.columns[0]
+
+          code_col  = get_col(kospi, ['Code','code','Symbol','symbol','종목코드'])
+          name_col  = get_col(kospi, ['Name','name','종목명','StockName'])
+          cap_col   = get_col(kospi, ['Marcap','MarCap','marcap','시가총액'])
+
+          print(f'사용 컬럼 — 코드:{code_col}, 이름:{name_col}, 시총:{cap_col}')
+
+          # 2. 종목 리스트 정리
+          all_stocks = []
+          for df, market in [(kospi, 'KOSPI'), (kosdaq, 'KOSDAQ')]:
+            c_col = get_col(df, ['Code','code','Symbol','symbol','종목코드'])
+            n_col = get_col(df, ['Name','name','종목명','StockName'])
+            mk_col = None
+            for mc in ['Marcap','MarCap','marcap','시가총액']:
+              if mc in df.columns:
+                mk_col = mc
+                break
+            for _, row in df.iterrows():
+              code = str(row[c_col]).strip().zfill(6)
+              name = str(row[n_col]).strip()
+              if not code or not name or code == 'nan':
+                continue
+              cap = None
+              if mk_col:
+                try:
+                  v = float(row[mk_col])
+                  cap = int(v // 100_000_000) if v > 100_000_000_000 else int(v)
+                except:
+                  pass
+              all_stocks.append({
+                'stock_code': code,
+                'stock_name': name,
+                'market':     market,
+                'price':      0,
+                'change_rate': 0.0,
+                'market_cap': cap,
+                'updated_at': '2000-01-01T00:00:00Z',  # 가격 미업데이트 표시
+              })
+
+          print(f'\n총 {len(all_stocks)}개 종목 준비')
+
+          # 3. 배치로 DB 저장 (100개씩)
+          BATCH = 100
+          total = len(all_stocks)
+          ok_count = 0
+
+          for i in range(0, total, BATCH):
+            batch = all_stocks[i:i+BATCH]
+            try:
+              status = supabase_upsert_batch(batch)
+              ok_count += len(batch)
+              if (i // BATCH) % 10 == 0:
+                print(f'  진행: {ok_count}/{total} ({ok_count/total*100:.0f}%)')
+            except Exception as e:
+              print(f'  배치 {i}-{i+BATCH} 실패: {e}')
+            time.sleep(0.05)  # API 레이트 제한 방지
+
+          print(f'\n✅ 완료: {ok_count}/{total}개 저장')
+          PYEOF
