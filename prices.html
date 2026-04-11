@@ -36,59 +36,46 @@
     <div class="topbar">
       <div>
         <div class="page-title">현재가 관리</div>
-        <div class="updated" id="lastUpdated">평일 오전 12시 · 오후 4시 10분 자동 업데이트</div>
+        <div class="updated" id="lastUpdated">평일 16:10 전종목 자동 업데이트</div>
       </div>
       <div class="btn-row">
-        <button class="btn" onclick="loadStocks()">새로고침</button>
-        <button class="btn btn-primary" onclick="openAddForm()">+ 종목 추가</button>
+        <button class="btn" onclick="loadAll()">새로고침</button>
+        <button class="btn btn-primary" id="refreshBtn" onclick="triggerRefresh()">탑픽 종목 즉시 업데이트</button>
       </div>
     </div>
 
-    <!-- 종목 추가 폼 -->
-    <div id="addForm" class="card" style="display:none;margin-bottom:1.25rem;">
+    <!-- 상태 배너 -->
+    <div id="statusBanner" style="display:none;padding:12px 16px;border-radius:var(--r-md);font-size:13px;margin-bottom:1.25rem;line-height:1.6;"></div>
+
+    <!-- 안내 -->
+    <div style="background:#e8f4fd;border:0.5px solid #b5d4f4;border-radius:var(--r-lg);padding:12px 16px;margin-bottom:1.25rem;font-size:13px;color:#0c447c;line-height:1.7;">
+      <strong>자동 업데이트</strong>: 평일 16:10 장 마감 후 전종목 자동 갱신<br>
+      <strong>즉시 업데이트</strong>: "탑픽 종목 즉시 업데이트" 클릭 → 스터디 탑픽 종목만 즉시 갱신 (약 30~60초 소요)
+    </div>
+
+    <!-- 탑픽 종목 현재가 -->
+    <div class="card" style="margin-bottom:1.25rem;">
       <div class="card-head">
-        <div class="card-title">종목 추가</div>
-        <button class="btn" onclick="closeAddForm()" style="font-size:12px;">닫기</button>
+        <div class="card-title">탑픽 종목 현재가</div>
+        <div style="font-size:12px;color:var(--muted);" id="pickUpdatedAt"></div>
       </div>
-      <div class="form-section">
-        <div class="form-row">
-          <div class="form-group">
-            <label>종목명 *</label>
-            <input type="text" id="add-name" placeholder="예: 삼성전자" />
-          </div>
-          <div class="form-group">
-            <label>종목코드 *</label>
-            <input type="text" id="add-code" placeholder="예: 005930" />
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>시장</label>
-            <select id="add-market">
-              <option value="KOSPI">KOSPI</option>
-              <option value="KOSDAQ">KOSDAQ</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>현재가 (원)</label>
-            <input type="number" id="add-price" placeholder="예: 72400" />
-          </div>
-        </div>
-        <div style="display:flex;justify-content:flex-end;gap:8px;">
-          <button class="btn" onclick="closeAddForm()">취소</button>
-          <button class="btn btn-primary" onclick="addStock()">추가</button>
-        </div>
+      <div id="pickList">
+        <div class="muted" style="text-align:center;padding:2rem;">불러오는 중...</div>
       </div>
     </div>
 
-    <!-- 종목 목록 -->
+    <!-- 종목 검색 -->
     <div class="card">
       <div class="card-head">
-        <div class="card-title">종목 현재가</div>
-        <div style="font-size:12px;color:var(--muted);">GitHub Actions가 평일 자동 업데이트 · 수동 수정도 가능</div>
+        <div class="card-title">종목 검색</div>
       </div>
-      <div id="stockList">
-        <div class="muted" style="text-align:center;padding:2rem;">불러오는 중...</div>
+      <div style="margin-bottom:12px;">
+        <input type="text" id="searchInput" placeholder="종목명 또는 코드 입력 (예: 삼성전자 또는 005930)"
+          style="width:100%;padding:8px 12px;font-size:13px;"
+          oninput="searchStocks(this.value)" />
+      </div>
+      <div id="searchResult" style="font-size:13px;color:var(--muted);">
+        2글자 이상 입력하면 검색합니다.
       </div>
     </div>
 
@@ -100,116 +87,185 @@
 <script src="js/config.js"></script>
 <script src="js/db.js"></script>
 <script>
-let stocks = [];
-
 async function init() {
   await requireAuth();
   checkDBConnection();
-  await loadStocks();
+  await loadAll();
 }
 
-async function loadStocks() {
-  stocks = await fetchStockPrices();
-  renderStocks();
+async function loadAll() {
+  await loadPickStocks();
 }
 
-function renderStocks() {
-  const el = document.getElementById('stockList');
-  if (!stocks.length) {
-    el.innerHTML = '<div class="muted" style="text-align:center;padding:2rem;">등록된 종목이 없습니다. "+ 종목 추가"를 눌러 추가하세요.</div>';
+// 탑픽 종목 현재가
+async function loadPickStocks() {
+  const { data: picks } = await sb.from('picks')
+    .select('stock_code, stock_name, market')
+    .not('stock_code', 'is', null);
+
+  if (!picks || picks.length === 0) {
+    document.getElementById('pickList').innerHTML =
+      '<div class="muted" style="text-align:center;padding:2rem;">탑픽 종목이 없습니다</div>';
     return;
   }
 
+  // 중복 제거
+  const codeMap = {};
+  for (const p of picks) {
+    if (p.stock_code) codeMap[p.stock_code] = p;
+  }
+  const codes = Object.keys(codeMap);
+
+  // 현재가 조회
+  const { data: prices } = await sb.from('stock_prices')
+    .select('stock_code, price, change_rate, market_cap, updated_at')
+    .in('stock_code', codes);
+
+  const priceMap = {};
+  for (const p of (prices || [])) priceMap[p.stock_code] = p;
+
+  const stocks = codes.map(code => ({
+    ...codeMap[code],
+    ...(priceMap[code] || { price: 0, change_rate: 0, market_cap: null, updated_at: null })
+  })).sort((a, b) => (b.price||0) - (a.price||0));
+
   // 마지막 업데이트 시각
-  const latest = stocks
-    .filter(s => s.updated_at && s.price > 0)
+  const latest = stocks.filter(s => s.updated_at && s.price > 0)
     .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
   if (latest) {
     const d = new Date(latest.updated_at);
-    document.getElementById('lastUpdated').textContent =
-      `마지막 업데이트: ${d.toLocaleDateString('ko-KR')} ${d.toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'})}`;
+    const str = `${d.toLocaleDateString('ko-KR')} ${d.toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'})} 기준`;
+    document.getElementById('lastUpdated').textContent = '마지막 업데이트: ' + str;
+    document.getElementById('pickUpdatedAt').textContent = str;
   }
 
+  const el = document.getElementById('pickList');
   el.innerHTML = stocks.map(s => {
     const hasPrice  = s.price && s.price > 0;
     const hasCap    = s.market_cap && s.market_cap > 0;
-    const changeCls = (s.change_rate || 0) >= 0 ? 'up' : 'dn';
-    const changeSign= (s.change_rate || 0) >= 0 ? '+' : '';
-
-    return `<div style="display:grid;grid-template-columns:180px 160px 160px 1fr;gap:12px;align-items:center;padding:14px 0;border-bottom:0.5px solid var(--border);">
-
-      <!-- 종목 정보 -->
+    const changeCls = (s.change_rate||0) >= 0 ? 'up' : 'dn';
+    const sign      = (s.change_rate||0) >= 0 ? '+' : '';
+    return `<div style="display:grid;grid-template-columns:200px 160px 160px;gap:12px;align-items:center;padding:12px 0;border-bottom:0.5px solid var(--border);">
       <div>
-        <div style="font-weight:500;font-size:14px;">${s.stock_name}</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px;">
-          ${s.stock_code} · <span class="badge b-hold">${s.market}</span>
-        </div>
+        <div style="font-weight:500;">${s.stock_name}</div>
+        <div style="font-size:12px;color:var(--muted);">${s.stock_code} · <span class="badge b-hold">${s.market}</span></div>
       </div>
-
-      <!-- 현재가 -->
       <div>
-        <div style="font-size:18px;font-weight:500;${hasPrice ? '' : 'color:var(--muted);'}">
-          ${hasPrice ? s.price.toLocaleString() + '원' : '미입력'}
+        <div style="font-size:20px;font-weight:500;${hasPrice?'':'color:var(--muted)'}">
+          ${hasPrice ? s.price.toLocaleString()+'원' : '미입력'}
         </div>
-        ${hasPrice ? `<div class="${changeCls}" style="font-size:12px;">${changeSign}${(s.change_rate||0).toFixed(2)}%</div>` : ''}
+        ${hasPrice ? `<div class="${changeCls}" style="font-size:12px;">${sign}${(s.change_rate||0).toFixed(2)}%</div>` : ''}
       </div>
-
-      <!-- 시가총액 -->
       <div style="font-size:13px;color:var(--muted);">
-        ${hasCap ? s.market_cap.toLocaleString() + '억원' : '시총 미입력'}
-      </div>
-
-      <!-- 수동 입력 폼 -->
-      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-        <input type="number" id="price-${s.stock_code}"
-          placeholder="현재가" value="${hasPrice ? s.price : ''}"
-          style="width:110px;padding:6px 8px;font-size:13px;" />
-        <input type="number" id="change-${s.stock_code}"
-          placeholder="등락률%" step="0.01" value="${s.change_rate || ''}"
-          style="width:90px;padding:6px 8px;font-size:13px;" />
-        <input type="number" id="cap-${s.stock_code}"
-          placeholder="시총(억)" value="${hasCap ? s.market_cap : ''}"
-          style="width:100px;padding:6px 8px;font-size:13px;" />
-        <button class="btn btn-primary" style="font-size:12px;padding:6px 12px;"
-          onclick="savePrice('${s.stock_code}','${s.stock_name}','${s.market}')">저장</button>
+        ${hasCap ? s.market_cap.toLocaleString()+'억원' : '-'}
       </div>
     </div>`;
   }).join('');
 
-  // 마지막 항목 border 제거
   const items = el.querySelectorAll('div[style*="border-bottom"]');
-  if (items.length) items[items.length - 1].style.borderBottom = 'none';
+  if (items.length) items[items.length-1].style.borderBottom = 'none';
 }
 
-async function savePrice(code, name, market) {
-  const price      = parseInt(document.getElementById(`price-${code}`).value)  || 0;
-  const changeRate = parseFloat(document.getElementById(`change-${code}`).value) || 0;
-  const marketCap  = parseInt(document.getElementById(`cap-${code}`).value)    || null;
+// GitHub Actions 트리거
+async function triggerRefresh() {
+  if (!window.GH_PAT || window.GH_PAT === 'YOUR_GITHUB_PAT') {
+    showBanner('error', 'config.js에 GH_PAT와 GH_REPO를 설정하세요. 아래 안내를 확인하세요.');
+    return;
+  }
 
-  if (!price) { toast('현재가를 입력하세요.'); return; }
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  btn.textContent = '요청 중...';
+  showBanner('pending', '업데이트 요청 중...');
 
   try {
-    await upsertStockPrice({ stock_code: code, stock_name: name, market, price, change_rate: changeRate, market_cap: marketCap });
-    toast(`${name} 저장 완료!`);
-    await loadStocks();
-  } catch(e) { toast('오류: ' + e.message); }
+    const res = await fetch(
+      `https://api.github.com/repos/${window.GH_REPO}/actions/workflows/refresh_picks.yml/dispatches`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${window.GH_PAT}`,
+          'Accept': 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ref: 'main' }),
+      }
+    );
+
+    if (res.status === 204) {
+      showBanner('ok', '✅ 업데이트 시작! 약 60초 후 자동으로 새로고침됩니다.');
+      btn.textContent = '업데이트 중... (60초 후 완료)';
+      setTimeout(async () => {
+        await loadPickStocks();
+        btn.disabled = false;
+        btn.textContent = '탑픽 종목 즉시 업데이트';
+        showBanner('ok', '✅ 업데이트 완료!');
+      }, 65000);
+    } else {
+      throw new Error(`HTTP ${res.status} — PAT 권한(workflow)을 확인하세요`);
+    }
+  } catch(e) {
+    showBanner('error', '❌ 오류: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '탑픽 종목 즉시 업데이트';
+  }
 }
 
-function openAddForm()  { document.getElementById('addForm').style.display = 'block'; document.getElementById('add-name').focus(); }
-function closeAddForm() { document.getElementById('addForm').style.display = 'none'; }
+function showBanner(type, msg) {
+  const el = document.getElementById('statusBanner');
+  const styles = {
+    ok:      'background:var(--greenbg);border:0.5px solid #9fe1cb;color:var(--green)',
+    error:   'background:var(--upbg);border:0.5px solid #f0997b;color:var(--up)',
+    pending: 'background:var(--bg);border:0.5px solid var(--border);color:var(--muted)',
+  };
+  el.style.cssText = styles[type] || styles.pending;
+  el.textContent = msg;
+  el.style.display = 'block';
+}
 
-async function addStock() {
-  const name   = document.getElementById('add-name').value.trim();
-  const code   = document.getElementById('add-code').value.trim();
-  const market = document.getElementById('add-market').value;
-  const price  = parseInt(document.getElementById('add-price').value) || 0;
-  if (!name || !code) { toast('종목명과 종목코드를 입력하세요.'); return; }
-  try {
-    await upsertStockPrice({ stock_code: code, stock_name: name, market, price });
-    toast(`${name} 추가 완료!`);
-    closeAddForm();
-    await loadStocks();
-  } catch(e) { toast('오류: ' + e.message); }
+// 종목 검색
+let searchTimer = null;
+async function searchStocks(query) {
+  clearTimeout(searchTimer);
+  const el = document.getElementById('searchResult');
+  if (!query || query.length < 2) {
+    el.innerHTML = '<span style="color:var(--muted);">2글자 이상 입력하면 검색합니다.</span>';
+    return;
+  }
+  searchTimer = setTimeout(async () => {
+    el.innerHTML = '<span style="color:var(--muted);">검색 중...</span>';
+    try {
+      const { data } = await sb.from('stock_prices')
+        .select('stock_code, stock_name, market, price, change_rate, market_cap, updated_at')
+        .or(`stock_name.ilike.%${query}%,stock_code.ilike.%${query}%`)
+        .gt('price', 0)
+        .order('market_cap', { ascending: false, nullsFirst: false })
+        .limit(10);
+
+      if (!data || data.length === 0) {
+        el.innerHTML = '<span style="color:var(--muted);">검색 결과 없음</span>';
+        return;
+      }
+
+      el.innerHTML = data.map(s => {
+        const changeCls = (s.change_rate||0) >= 0 ? 'up' : 'dn';
+        const sign      = (s.change_rate||0) >= 0 ? '+' : '';
+        const d = s.updated_at ? new Date(s.updated_at) : null;
+        const timeStr = d && d.getFullYear() > 2000
+          ? `${d.toLocaleDateString('ko-KR')} ${d.toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'})}`
+          : '미업데이트';
+        return `<div style="display:grid;grid-template-columns:160px 140px 130px 130px 1fr;gap:8px;align-items:center;padding:10px 0;border-bottom:0.5px solid var(--border);font-size:13px;">
+          <div style="font-weight:500;">${s.stock_name}</div>
+          <div style="color:var(--muted);">${s.stock_code} · ${s.market}</div>
+          <div style="font-weight:500;">${s.price ? s.price.toLocaleString()+'원' : '-'}</div>
+          <div class="${changeCls}">${s.price ? sign+(s.change_rate||0).toFixed(2)+'%' : ''}</div>
+          <div style="color:var(--muted);font-size:11px;">${timeStr}</div>
+        </div>`;
+      }).join('');
+    } catch(e) {
+      el.innerHTML = '<span style="color:var(--up);">검색 오류: ' + e.message + '</span>';
+    }
+  }, 400);
 }
 
 async function doLogout() { await sb.auth.signOut(); location.href = 'index.html'; }
