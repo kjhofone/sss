@@ -92,92 +92,26 @@ async function fetchMemberStats() {
 }
 
 // ============================================================
+// 현재가 조회 — DB stock_prices 테이블에서 읽기
 // ============================================================
-// 현재가 조회
-// 1순위: DB stock_prices (GitHub Actions 자동 업데이트, 빠름)
-// 2순위: DB에 없는 종목 → Edge Function 실시간 조회 (네이버 금융)
-// 5분 캐시
-// ============================================================
-const _priceCache = {};
-
 async function fetchCurrentPrices(codes) {
   if (!codes || codes.length === 0) return {};
-
-  const now     = Date.now();
-  const result  = {};
-  const noCache = [];
-
-  // 캐시 확인
-  for (const c of codes) {
-    if (_priceCache[c] && (now - _priceCache[c].ts) < 5 * 60 * 1000) {
-      result[c] = _priceCache[c].data;
-    } else {
-      noCache.push(c);
+  const { data, error } = await sb
+    .from('stock_prices')
+    .select('stock_code, price, change_rate, market_cap, updated_at')
+    .in('stock_code', codes);
+  if (error) { console.error('fetchCurrentPrices 오류:', error); return {}; }
+  const result = {};
+  for (const row of (data || [])) {
+    if (row.price && row.price > 0) {
+      result[row.stock_code] = {
+        price:     row.price,
+        change:    row.change_rate || 0,
+        marketCap: row.market_cap || null,
+        updatedAt: row.updated_at,
+      };
     }
   }
-  if (noCache.length === 0) return result;
-
-  // 1순위: DB에서 조회
-  try {
-    const { data, error } = await sb
-      .from('stock_prices')
-      .select('stock_code, price, change_rate, market_cap, updated_at')
-      .in('stock_code', noCache);
-
-    if (!error && data) {
-      for (const row of data) {
-        if (row.price && row.price > 0) {
-          const info = {
-            price:     row.price,
-            change:    row.change_rate || 0,
-            marketCap: row.market_cap  || null,
-            updatedAt: row.updated_at,
-          };
-          result[row.stock_code] = info;
-          _priceCache[row.stock_code] = { ts: now, data: info };
-        }
-      }
-    }
-  } catch(e) {
-    console.warn('DB 현재가 조회 실패:', e.message);
-  }
-
-  // 2순위: DB에 없는 종목 → Edge Function (네이버 금융) 실시간 조회
-  const missing = noCache.filter(c => !result[c]);
-  if (missing.length > 0) {
-    try {
-      const { data, error } = await sb.functions.invoke('stock-price', {
-        body: { codes: missing }
-      });
-      if (!error && data) {
-        for (const [code, info] of Object.entries(data)) {
-          if (info && info.price > 0) {
-            const enriched = { ...info, updatedAt: new Date().toISOString() };
-            result[code] = enriched;
-            _priceCache[code] = { ts: now, data: enriched };
-
-            // DB에도 저장 (다음에는 DB에서 바로 읽힘)
-            try {
-              await sb.from('stock_prices').upsert({
-                stock_code:  code,
-                stock_name:  info.name || code,
-                market:      'KOSPI',
-                price:       info.price,
-                change_rate: info.change || 0,
-                market_cap:  info.marketCap || null,
-                updated_at:  new Date().toISOString(),
-              }, { onConflict: 'stock_code' });
-            } catch(e) {
-              console.warn('DB 자동 저장 실패:', e.message);
-            }
-          }
-        }
-      }
-    } catch(e) {
-      console.warn('Edge Function 조회 실패:', e.message);
-    }
-  }
-
   return result;
 }
 
@@ -226,4 +160,19 @@ async function updateSchedule(id, payload) {
 async function deleteSchedule(id) {
   const { error } = await sb.from('schedules').delete().eq('id', id);
   if (error) throw new Error(error.message);
+}
+
+// ============================================================
+// 앱 설정 (app_settings 테이블)
+// ============================================================
+async function getAppSetting(key) {
+  const { data, error } = await sb.from('app_settings').select('value').eq('key', key).single();
+  if (error) return null;
+  return data?.value || null;
+}
+
+async function setAppSetting(key, value) {
+  const { error } = await sb.from('app_settings')
+    .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  if (error) throw error;
 }

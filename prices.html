@@ -40,17 +40,45 @@
       </div>
       <div class="btn-row">
         <button class="btn" onclick="loadAll()">새로고침</button>
-        <button class="btn btn-primary" id="refreshBtn" onclick="triggerRefresh()">탑픽 종목 즉시 업데이트</button>
+        <button class="btn btn-primary" id="refreshBtn" onclick="triggerRefresh()" disabled style="opacity:0.5;">
+          탑픽 종목 즉시 업데이트
+        </button>
       </div>
     </div>
 
     <!-- 상태 배너 -->
     <div id="statusBanner" style="display:none;padding:12px 16px;border-radius:var(--r-md);font-size:13px;margin-bottom:1.25rem;line-height:1.6;"></div>
 
+    <!-- GitHub PAT 설정 -->
+    <div class="card" style="margin-bottom:1.25rem;">
+      <div class="card-head">
+        <div class="card-title">
+          즉시 업데이트 설정
+          <span id="patStatus" style="font-size:12px;font-weight:400;margin-left:8px;"></span>
+        </div>
+        <button class="btn" style="font-size:12px;" onclick="togglePatForm()">설정 변경</button>
+      </div>
+      <div id="patForm" style="display:none;margin-top:8px;">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:12px;line-height:1.7;">
+          GitHub PAT를 입력하면 모든 참여자가 즉시 업데이트 버튼을 사용할 수 있습니다.<br>
+          PAT는 Supabase DB에 저장됩니다. (RLS로 로그인한 사용자만 접근 가능)<br>
+          <strong>발급:</strong> GitHub 프로필 → Settings → Developer settings →
+          Personal access tokens → Tokens (classic) → <strong>workflow</strong> 권한 체크
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <input type="password" id="patInput" placeholder="ghp_로 시작하는 토큰 입력"
+            style="flex:1;min-width:200px;padding:8px 12px;font-size:13px;" />
+          <button class="btn btn-primary" onclick="savePat()">저장</button>
+          <button class="btn" onclick="clearPat()"
+            style="color:var(--up);border-color:var(--up);">삭제</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 안내 -->
     <div style="background:#e8f4fd;border:0.5px solid #b5d4f4;border-radius:var(--r-lg);padding:12px 16px;margin-bottom:1.25rem;font-size:13px;color:#0c447c;line-height:1.7;">
       <strong>자동 업데이트</strong>: 평일 16:10 장 마감 후 전종목 자동 갱신<br>
-      <strong>즉시 업데이트</strong>: "탑픽 종목 즉시 업데이트" 클릭 → 스터디 탑픽 종목만 즉시 갱신 (약 30~60초 소요)
+      <strong>즉시 업데이트</strong>: PAT 설정 후 버튼 클릭 → 스터디 탑픽 종목만 즉시 갱신 (약 30~60초)
     </div>
 
     <!-- 탑픽 종목 현재가 -->
@@ -70,7 +98,8 @@
         <div class="card-title">종목 검색</div>
       </div>
       <div style="margin-bottom:12px;">
-        <input type="text" id="searchInput" placeholder="종목명 또는 코드 입력 (예: 삼성전자 또는 005930)"
+        <input type="text" id="searchInput"
+          placeholder="종목명 또는 코드 입력 (예: 삼성전자 또는 005930)"
           style="width:100%;padding:8px 12px;font-size:13px;"
           oninput="searchStocks(this.value)" />
       </div>
@@ -94,10 +123,130 @@ async function init() {
 }
 
 async function loadAll() {
-  await loadPickStocks();
+  await Promise.all([loadPatStatus(), loadPickStocks()]);
 }
 
-// 탑픽 종목 현재가
+// ── PAT 상태 로드 (DB에서)
+async function loadPatStatus() {
+  const pat = await getAppSetting('gh_pat');
+  updatePatUI(!!pat);
+}
+
+function updatePatUI(hasPat) {
+  const el  = document.getElementById('patStatus');
+  const btn = document.getElementById('refreshBtn');
+  if (hasPat) {
+    el.textContent    = '✅ PAT 설정됨 — 모든 참여자 사용 가능';
+    el.style.color    = 'var(--green)';
+    btn.disabled      = false;
+    btn.style.opacity = '1';
+  } else {
+    el.textContent    = '⚠️ PAT 미설정 — 즉시 업데이트 비활성';
+    el.style.color    = 'var(--amber)';
+    btn.disabled      = true;
+    btn.style.opacity = '0.5';
+  }
+}
+
+function togglePatForm() {
+  const f = document.getElementById('patForm');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+
+async function savePat() {
+  const val = document.getElementById('patInput').value.trim();
+  if (!val || !val.startsWith('ghp_')) {
+    toast('ghp_로 시작하는 PAT를 입력하세요.');
+    return;
+  }
+  try {
+    await setAppSetting('gh_pat', val);
+    document.getElementById('patInput').value = '';
+    document.getElementById('patForm').style.display = 'none';
+    updatePatUI(true);
+    toast('PAT가 저장되었습니다. 모든 참여자가 즉시 업데이트를 사용할 수 있습니다.');
+  } catch(e) {
+    toast('저장 실패: ' + e.message);
+  }
+}
+
+async function clearPat() {
+  try {
+    await setAppSetting('gh_pat', '');
+    updatePatUI(false);
+    toast('PAT가 삭제되었습니다.');
+  } catch(e) {
+    toast('삭제 실패: ' + e.message);
+  }
+}
+
+// ── GitHub Actions 트리거
+async function triggerRefresh() {
+  // DB에서 PAT 조회
+  const pat  = await getAppSetting('gh_pat');
+  const repo = window.GH_REPO;
+
+  if (!pat) {
+    showBanner('error', '⚠️ PAT가 설정되지 않았습니다. 위에서 설정해주세요.');
+    return;
+  }
+  if (!repo || repo.includes('YOUR_GITHUB_ID')) {
+    showBanner('error', '⚠️ config.js에서 GH_REPO를 설정하세요.');
+    return;
+  }
+
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  btn.textContent = '요청 중...';
+  showBanner('pending', '업데이트 요청 중...');
+
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${repo}/actions/workflows/refresh_picks.yml/dispatches`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${pat}`,
+          'Accept': 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ref: 'main' }),
+      }
+    );
+
+    if (res.status === 204) {
+      showBanner('ok', '✅ 업데이트 시작! 약 60초 후 자동으로 새로고침됩니다.');
+      btn.textContent = '업데이트 중... (60초 후 완료)';
+      setTimeout(async () => {
+        await loadPickStocks();
+        btn.disabled    = false;
+        btn.textContent = '탑픽 종목 즉시 업데이트';
+        showBanner('ok', '✅ 업데이트 완료!');
+      }, 65000);
+    } else {
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status} — PAT workflow 권한을 확인하세요`);
+    }
+  } catch(e) {
+    showBanner('error', '❌ 오류: ' + e.message);
+    btn.disabled    = false;
+    btn.textContent = '탑픽 종목 즉시 업데이트';
+  }
+}
+
+function showBanner(type, msg) {
+  const el = document.getElementById('statusBanner');
+  const styles = {
+    ok:      'background:var(--greenbg);border:0.5px solid #9fe1cb;color:var(--green)',
+    error:   'background:var(--upbg);border:0.5px solid #f0997b;color:var(--up)',
+    pending: 'background:var(--bg);border:0.5px solid var(--border);color:var(--muted)',
+  };
+  el.style.cssText = (styles[type] || styles.pending) + ';padding:12px 16px;border-radius:var(--r-md);font-size:13px;margin-bottom:1.25rem;';
+  el.textContent   = msg;
+  el.style.display = 'block';
+}
+
+// ── 탑픽 종목 현재가
 async function loadPickStocks() {
   const { data: picks } = await sb.from('picks')
     .select('stock_code, stock_name, market')
@@ -109,14 +258,12 @@ async function loadPickStocks() {
     return;
   }
 
-  // 중복 제거
   const codeMap = {};
   for (const p of picks) {
     if (p.stock_code) codeMap[p.stock_code] = p;
   }
   const codes = Object.keys(codeMap);
 
-  // 현재가 조회
   const { data: prices } = await sb.from('stock_prices')
     .select('stock_code, price, change_rate, market_cap, updated_at')
     .in('stock_code', codes);
@@ -127,15 +274,15 @@ async function loadPickStocks() {
   const stocks = codes.map(code => ({
     ...codeMap[code],
     ...(priceMap[code] || { price: 0, change_rate: 0, market_cap: null, updated_at: null })
-  })).sort((a, b) => (b.price||0) - (a.price||0));
+  })).sort((a, b) => (b.market_cap||0) - (a.market_cap||0));
 
   // 마지막 업데이트 시각
   const latest = stocks.filter(s => s.updated_at && s.price > 0)
     .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
   if (latest) {
     const d = new Date(latest.updated_at);
-    const str = `${d.toLocaleDateString('ko-KR')} ${d.toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'})} 기준`;
-    document.getElementById('lastUpdated').textContent = '마지막 업데이트: ' + str;
+    const str = `${d.toLocaleDateString('ko-KR')} ${d.toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} 기준`;
+    document.getElementById('lastUpdated').textContent  = '마지막 업데이트: ' + str;
     document.getElementById('pickUpdatedAt').textContent = str;
   }
 
@@ -166,64 +313,7 @@ async function loadPickStocks() {
   if (items.length) items[items.length-1].style.borderBottom = 'none';
 }
 
-// GitHub Actions 트리거
-async function triggerRefresh() {
-  if (!window.GH_PAT || window.GH_PAT === 'YOUR_GITHUB_PAT') {
-    showBanner('error', 'config.js에 GH_PAT와 GH_REPO를 설정하세요. 아래 안내를 확인하세요.');
-    return;
-  }
-
-  const btn = document.getElementById('refreshBtn');
-  btn.disabled = true;
-  btn.textContent = '요청 중...';
-  showBanner('pending', '업데이트 요청 중...');
-
-  try {
-    const res = await fetch(
-      `https://api.github.com/repos/${window.GH_REPO}/actions/workflows/refresh_picks.yml/dispatches`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${window.GH_PAT}`,
-          'Accept': 'application/vnd.github+json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ ref: 'main' }),
-      }
-    );
-
-    if (res.status === 204) {
-      showBanner('ok', '✅ 업데이트 시작! 약 60초 후 자동으로 새로고침됩니다.');
-      btn.textContent = '업데이트 중... (60초 후 완료)';
-      setTimeout(async () => {
-        await loadPickStocks();
-        btn.disabled = false;
-        btn.textContent = '탑픽 종목 즉시 업데이트';
-        showBanner('ok', '✅ 업데이트 완료!');
-      }, 65000);
-    } else {
-      throw new Error(`HTTP ${res.status} — PAT 권한(workflow)을 확인하세요`);
-    }
-  } catch(e) {
-    showBanner('error', '❌ 오류: ' + e.message);
-    btn.disabled = false;
-    btn.textContent = '탑픽 종목 즉시 업데이트';
-  }
-}
-
-function showBanner(type, msg) {
-  const el = document.getElementById('statusBanner');
-  const styles = {
-    ok:      'background:var(--greenbg);border:0.5px solid #9fe1cb;color:var(--green)',
-    error:   'background:var(--upbg);border:0.5px solid #f0997b;color:var(--up)',
-    pending: 'background:var(--bg);border:0.5px solid var(--border);color:var(--muted)',
-  };
-  el.style.cssText = styles[type] || styles.pending;
-  el.textContent = msg;
-  el.style.display = 'block';
-}
-
-// 종목 검색
+// ── 종목 검색
 let searchTimer = null;
 async function searchStocks(query) {
   clearTimeout(searchTimer);
@@ -252,9 +342,9 @@ async function searchStocks(query) {
         const sign      = (s.change_rate||0) >= 0 ? '+' : '';
         const d = s.updated_at ? new Date(s.updated_at) : null;
         const timeStr = d && d.getFullYear() > 2000
-          ? `${d.toLocaleDateString('ko-KR')} ${d.toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'})}`
-          : '미업데이트';
-        return `<div style="display:grid;grid-template-columns:160px 140px 130px 130px 1fr;gap:8px;align-items:center;padding:10px 0;border-bottom:0.5px solid var(--border);font-size:13px;">
+          ? `${d.toLocaleDateString('ko-KR')} ${d.toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}`
+          : '-';
+        return `<div style="display:grid;grid-template-columns:160px 140px 110px 110px 1fr;gap:8px;align-items:center;padding:10px 0;border-bottom:0.5px solid var(--border);font-size:13px;">
           <div style="font-weight:500;">${s.stock_name}</div>
           <div style="color:var(--muted);">${s.stock_code} · ${s.market}</div>
           <div style="font-weight:500;">${s.price ? s.price.toLocaleString()+'원' : '-'}</div>
