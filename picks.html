@@ -18,13 +18,13 @@
 <div class="layout">
 
   <nav class="sidebar">
-    <div class="logo">
+    <a href="index.html" class="logo" style="text-decoration:none;color:inherit;cursor:pointer;">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
         <polyline points="1,12 5,7 9,9 15,3" stroke="#185fa5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         <polyline points="11,3 15,3 15,7" stroke="#185fa5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       투자 스터디
-    </div>
+    </a>
     <a href="index.html"    class="nav-item"><div class="nav-dot g"></div>대시보드</a>
     <a href="picks.html"    class="nav-item active"><div class="nav-dot"></div>탑픽 관리</a>
     <a href="trade.html"    class="nav-item"><div class="nav-dot r"></div>매수 / 매도</a>
@@ -119,10 +119,10 @@
         </div>
 
         <div id="lookupError" style="display:none;padding:12px 14px;background:var(--amberbg);border-radius:var(--r-md);font-size:13px;color:var(--amber);line-height:1.7;border:0.5px solid #f0c070;">
-          <strong>DB에 현재가 정보가 없습니다</strong><br>
-          GitHub Actions가 아직 이 종목을 업데이트하지 않았거나, 보유중 탑픽에 없는 종목입니다.<br>
-          <span style="color:var(--text);">① <a href="prices.html" style="color:#185fa5;">현재가 관리</a> 페이지에서 종목을 추가하거나<br>
-          ② 아래 현재가 · 시총 칸에 직접 입력하세요.</span>
+          <strong>현재가 자동 조회를 사용하려면 Edge Function 배포가 필요합니다</strong><br>
+          Supabase 대시보드 → Edge Functions → New Function → 이름: <code style="background:rgba(0,0,0,0.08);padding:1px 5px;border-radius:3px;">stock-price</code><br>
+          → <code style="background:rgba(0,0,0,0.08);padding:1px 5px;border-radius:3px;">edge_function_stock_price.ts</code> 내용 붙여넣기 → Deploy<br>
+          <span style="margin-top:4px;display:block;color:var(--text);">배포 전까지는 아래 현재가 · 시총 칸에 직접 입력하세요.</span>
         </div>
 
         <!-- 목표가 -->
@@ -278,29 +278,38 @@ function scheduleAutoLookup(val) {
   }
 }
 
-// ── 현재가 조회 (DB stock_prices 테이블에서 읽기)
+// ── 현재가 조회
 async function doLookup() {
   const code = document.getElementById('f-code').value.trim();
   if (!code) return;
 
-  document.getElementById('lookupResult').style.display  = 'none';
-  document.getElementById('lookupError').style.display   = 'none';
+  // 로딩 상태
+  document.getElementById('lookupResult').style.display = 'none';
+  document.getElementById('lookupError').style.display  = 'none';
   document.getElementById('lookupLoading').style.display = 'block';
-  document.getElementById('loadingDots').textContent = '현재가 조회 중...';
+
+  // 로딩 애니메이션
+  let dots = 0;
+  const anim = setInterval(() => {
+    dots = (dots + 1) % 4;
+    const el = document.getElementById('loadingDots');
+    if (el) el.textContent = '현재가 조회 중' + '.'.repeat(dots);
+  }, 400);
 
   try {
     const prices = await fetchCurrentPrices([code]);
+    clearInterval(anim);
     document.getElementById('lookupLoading').style.display = 'none';
 
     const info = prices[code];
-    if (!info || !info.price || info.price === 0) {
-      // DB에 없으면 에러 박스 표시
+    if (!info || info.price === 0) {
       document.getElementById('lookupError').style.display = 'block';
       return;
     }
 
     // 결과 표시
-    document.getElementById('lookupSource').textContent = `${code} · DB 저장 가격 (GitHub Actions 자동 업데이트)`;
+    const suffix = info.name && !info.name.includes(code) ? ` · ${info.name}` : '';
+    document.getElementById('lookupSource').textContent = code + suffix;
 
     const priceEl = document.getElementById('r-price');
     priceEl.textContent = won(info.price);
@@ -314,14 +323,7 @@ async function doLookup() {
     if (info.marketCap) {
       capEl.textContent = `${info.marketCap.toLocaleString()}억원`;
     } else {
-      capEl.textContent = '시총 미입력 (직접 입력)';
-    }
-
-    // 업데이트 시각 표시
-    if (info.updatedAt) {
-      const d = new Date(info.updatedAt);
-      document.getElementById('lookupSource').textContent +=
-        ` · ${d.toLocaleDateString('ko-KR')} ${d.toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'})} 기준`;
+      capEl.textContent = '직접 입력';
     }
 
     document.getElementById('lookupResult').style.display = 'block';
@@ -332,10 +334,12 @@ async function doLookup() {
       document.getElementById('f-cur-cap').value = info.marketCap;
     }
 
+    // 상승여력 미리보기 갱신
     calcUpsidePreview();
     calcCapUpside();
 
   } catch(e) {
+    clearInterval(anim);
     document.getElementById('lookupLoading').style.display = 'none';
     document.getElementById('lookupError').style.display   = 'block';
     console.error(e);
