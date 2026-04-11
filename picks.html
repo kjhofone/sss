@@ -133,7 +133,7 @@
           <div class="form-group">
             <label>목표 주가 (원)</label>
             <input type="number" id="f-target-price" placeholder="예: 90000"
-              oninput="calcUpsidePreview()" />
+              oninput="onTargetPriceInput()" />
           </div>
         </div>
 
@@ -152,7 +152,7 @@
           <div class="form-group">
             <label>목표 시총 (억원)</label>
             <input type="number" id="f-tgt-cap" placeholder="예: 4200000"
-              oninput="calcCapUpside()" />
+              oninput="onTargetCapInput()" />
           </div>
         </div>
 
@@ -426,6 +426,38 @@ document.addEventListener('click', (e) => {
     document.getElementById('stockDropdown').style.display = 'none';
   }
 });
+
+// ── 목표주가 입력 → 목표시총 자동 계산
+function onTargetPriceInput() {
+  calcUpsidePreview();
+
+  const curPrice  = parseInt(document.getElementById('f-cur-price').value);
+  const curCap    = parseInt(document.getElementById('f-cur-cap').value);
+  const tgtPrice  = parseInt(document.getElementById('f-target-price').value);
+  const tgtCapEl  = document.getElementById('f-tgt-cap');
+
+  if (curPrice > 0 && curCap > 0 && tgtPrice > 0) {
+    const tgtCap = Math.round(curCap * (tgtPrice / curPrice));
+    tgtCapEl.value = tgtCap;
+    calcCapUpside();
+  }
+}
+
+// ── 목표시총 입력 → 목표주가 자동 계산
+function onTargetCapInput() {
+  calcCapUpside();
+
+  const curPrice  = parseInt(document.getElementById('f-cur-price').value);
+  const curCap    = parseInt(document.getElementById('f-cur-cap').value);
+  const tgtCap    = parseInt(document.getElementById('f-tgt-cap').value);
+  const tgtPriceEl = document.getElementById('f-target-price');
+
+  if (curPrice > 0 && curCap > 0 && tgtCap > 0) {
+    const tgtPrice = Math.round(curPrice * (tgtCap / curCap));
+    tgtPriceEl.value = tgtPrice;
+    calcUpsidePreview();
+  }
+}
 
 function calcUpsidePreview() {
   const cur = parseInt(document.getElementById('f-cur-price').value);
