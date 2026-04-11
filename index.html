@@ -21,6 +21,7 @@
     <a href="trade.html" class="nav-item"><div class="nav-dot r"></div>매수 / 매도</a>
     <a href="members.html" class="nav-item"><div class="nav-dot"></div>참여자 현황</a>
     <a href="settle.html" class="nav-item"><div class="nav-dot a"></div>결산 관리</a>
+    <a href="prices.html" class="nav-item"><div class="nav-dot g"></div>현재가 관리</a>
     <a href="schedule.html" class="nav-item"><div class="nav-dot g"></div>스터디 일정</a>
     <a href="admin.html" class="nav-item"><div class="nav-dot"></div>사용자 관리</a>
     <div class="sidebar-spacer"></div>
@@ -55,7 +56,7 @@
         <div class="card-head">
           <div class="card-title">이번 달 탑픽 <span id="priceUpdated" style="font-size:11px;color:var(--muted);font-weight:400;"></span></div>
           <div style="display:flex;align-items:center;gap:8px;">
-            <button class="btn" id="priceRefreshBtn" style="font-size:12px;padding:4px 10px;" onclick="triggerAndRefresh()">현재가 갱신</button>
+            <button class="btn" style="font-size:12px;padding:4px 10px;" id="priceRefreshBtn" onclick="triggerAndRefresh()">현재가 갱신</button>
             <a href="picks.html" style="font-size:12px;color:#185fa5;text-decoration:none;">전체 →</a>
           </div>
         </div>
@@ -134,7 +135,7 @@ async function triggerAndRefresh() {
   const pat  = await getAppSetting('gh_pat');
   const repo = window.GH_REPO;
 
-  // PAT가 없으면 DB에서 바로 조회 (빠른 갱신)
+  // PAT 없으면 DB에서 바로 조회
   if (!pat || !repo || repo.includes('YOUR_GITHUB_ID')) {
     btn.textContent = '조회 중...';
     await refreshPricesFromDB();
@@ -160,10 +161,8 @@ async function triggerAndRefresh() {
         body: JSON.stringify({ ref: 'main' }),
       }
     );
-
     if (res.status === 204) {
-      document.getElementById('priceUpdated').textContent = '업데이트 중... 약 60초 후 완료됩니다.';
-      // 60초 후 DB에서 최신 가격 조회
+      document.getElementById('priceUpdated').textContent = '업데이트 중... 약 60초 후 완료';
       setTimeout(async () => {
         await refreshPricesFromDB();
         btn.disabled = false;
@@ -197,57 +196,8 @@ async function refreshPrices() {
   await refreshPricesFromDB();
 }
 
-
-async function triggerQuickRefresh() {
-  const pat  = await getAppSetting('gh_pat');
-  const repo = window.GH_REPO;
-
-  if (!pat) {
-    toast('현재가 관리 페이지에서 PAT를 먼저 설정하세요.');
-    return;
-  }
-  if (!repo || repo.includes('YOUR_GITHUB_ID')) {
-    toast('config.js에서 GH_REPO를 설정하세요.');
-    return;
-  }
-
-  const btn = document.getElementById('quickRefreshBtn');
-  btn.disabled = true;
-  btn.textContent = '업데이트 중...';
-
-  try {
-    const res = await fetch(
-      `https://api.github.com/repos/${repo}/actions/workflows/refresh_picks.yml/dispatches`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${pat}`,
-          'Accept': 'application/vnd.github+json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ ref: 'main' }),
-      }
-    );
-
-    if (res.status === 204) {
-      toast('✅ 업데이트 시작! 약 60초 후 새로고침하세요.');
-      btn.textContent = '업데이트 중... (60초)';
-      setTimeout(() => {
-        btn.disabled = false;
-        btn.textContent = '탑픽 즉시 업데이트';
-        refreshPrices();
-      }, 65000);
-    } else {
-      throw new Error(`HTTP ${res.status}`);
-    }
-  } catch(e) {
-    toast('오류: ' + e.message);
-    btn.disabled = false;
-    btn.textContent = '탑픽 즉시 업데이트';
-  }
-}
-
 init();
+
 </script>
 </body>
 </html>
