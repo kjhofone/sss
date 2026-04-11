@@ -140,5 +140,5 @@ async function doLogout() {
 // GH_REPO: "GitHub아이디/저장소명" 형식 (예: "kjhofone/fund-study")
 // ============================================================
 // ⚠️  아래 두 값을 설정하세요
-window.GH_PAT  = 'YOUR_GITHUB_PAT';   // GitHub PAT (ghp_로 시작)
+window.GH_PAT  = '';   // GitHub PAT (ghp_로 시작)
 window.GH_REPO = 'kjhofone/sss';  // 예: kjhofone/fund-study
