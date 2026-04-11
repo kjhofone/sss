@@ -24,7 +24,7 @@ function toast(msg, ms=2500) {
 
 // ── GitHub Actions 트리거 설정
 // ⚠️ 아래 GH_REPO만 본인 저장소로 변경 (PAT는 홈페이지에서 입력)
-window.GH_REPO = 'github.dev/kjhofone/sss';  // 예: kjhofone/fund-study
+window.GH_REPO = 'kjhofone/sss';  // 예: kjhofone/fund-study
 
 // ── DB 연결 상태 확인
 async function checkDBConnection() {
